@@ -17,6 +17,10 @@ For generated typed RPC clients:
 composer require laravel-skir/client
 ```
 
+## Releasing
+
+Create a GitHub release for the version in `package.json`. The release workflow reruns type checks, build, package validation, and tests before publishing to npm with provenance. It expects an `NPM_TOKEN` repository secret.
+
 ## Usage with Skir
 
 Add the generator to `skir.yml`:

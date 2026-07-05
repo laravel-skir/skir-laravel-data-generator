@@ -16,6 +16,9 @@
   "bugs": {
     "url": "https://github.com/laravel-skir/skir-laravel-data-generator/issues"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "laravel-data",
     "php",
