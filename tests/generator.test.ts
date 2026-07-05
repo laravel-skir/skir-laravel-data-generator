@@ -280,6 +280,127 @@ describe("generatePhpFiles", () => {
     expect(addressFile?.code).toContain("Field::value('billing_address', 0, \\App\\Skir\\Common\\Address::skirType())");
   });
 
+  it("disambiguates duplicate class names in the same PHP namespace", () => {
+    const usersUserRecord = {
+      kind: "record",
+      key: "admin/users.skir:0",
+      recordType: "struct" as const,
+      name: "User",
+      fields: [
+        { kind: "field" as const, name: "email", number: 0, type: { kind: "primitive", primitive: "string" } },
+      ],
+    };
+
+    const profilesUserRecord = {
+      kind: "record",
+      key: "admin/profiles.skir:0",
+      recordType: "struct" as const,
+      name: "User",
+      fields: [
+        { kind: "field" as const, name: "display_name", number: 0, type: { kind: "primitive", primitive: "string" } },
+      ],
+    };
+
+    const auditRecord = {
+      kind: "record",
+      key: "admin/audits.skir:0",
+      recordType: "struct" as const,
+      name: "Audit",
+      fields: [
+        {
+          kind: "field" as const,
+          name: "actor",
+          number: 0,
+          type: {
+            kind: "record",
+            key: "admin/users.skir:0",
+            nameParts: [{ token: { text: "User" } }],
+          },
+        },
+      ],
+    };
+
+    const files = generatePhpFiles({
+      config: {
+        namespace: "App\\Skir",
+      },
+      recordMap: new Map([
+        [
+          "admin/users.skir:0",
+          {
+            kind: "record-location",
+            record: usersUserRecord,
+            recordAncestors: [usersUserRecord],
+            modulePath: "admin/users.skir",
+          },
+        ],
+        [
+          "admin/profiles.skir:0",
+          {
+            kind: "record-location",
+            record: profilesUserRecord,
+            recordAncestors: [profilesUserRecord],
+            modulePath: "admin/profiles.skir",
+          },
+        ],
+        [
+          "admin/audits.skir:0",
+          {
+            kind: "record-location",
+            record: auditRecord,
+            recordAncestors: [auditRecord],
+            modulePath: "admin/audits.skir",
+          },
+        ],
+      ]),
+      modules: [
+        {
+          path: "admin/users.skir",
+          records: [
+            {
+              kind: "record-location",
+              record: usersUserRecord,
+              recordAncestors: [usersUserRecord],
+              modulePath: "admin/users.skir",
+            },
+          ],
+        },
+        {
+          path: "admin/profiles.skir",
+          records: [
+            {
+              kind: "record-location",
+              record: profilesUserRecord,
+              recordAncestors: [profilesUserRecord],
+              modulePath: "admin/profiles.skir",
+            },
+          ],
+        },
+        {
+          path: "admin/audits.skir",
+          records: [
+            {
+              kind: "record-location",
+              record: auditRecord,
+              recordAncestors: [auditRecord],
+              modulePath: "admin/audits.skir",
+            },
+          ],
+        },
+      ],
+    });
+
+    const usersUserFile = files.find((file) => file.path === "Admin/UsersUser.php");
+    const profilesUserFile = files.find((file) => file.path === "Admin/ProfilesUser.php");
+    const auditFile = files.find((file) => file.path === "Admin/Audit.php");
+
+    expect(files.map((file) => file.path)).not.toContain("Admin/User.php");
+    expect(usersUserFile?.code).toContain("final readonly class UsersUser");
+    expect(profilesUserFile?.code).toContain("final readonly class ProfilesUser");
+    expect(auditFile?.code).toContain("public UsersUser $actor");
+    expect(auditFile?.code).toContain("Field::value('actor', 0, UsersUser::skirType())");
+  });
+
   it("types and normalizes generated record fields", () => {
     const files = generatePhpFiles({
       config: {

@@ -58,6 +58,16 @@ describe("skir CLI integration", () => {
     );
 
     writeFileSync(
+      join(adminSkirSourcePath, "profiles.skir"),
+      [
+        "struct User {",
+        "  display_name: string;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
       join(commonSkirSourcePath, "address.skir"),
       [
         "struct Address {",
@@ -111,10 +121,10 @@ require __DIR__.'/vendor/autoload.php';
 
 use App\\Skir\\Admin\\SkirMethods;
 use App\\Skir\\Admin\\SubscriptionStatus;
-use App\\Skir\\Admin\\User;
+use App\\Skir\\Admin\\UsersUser;
 use App\\Skir\\Common\\Address;
 
-$user = new User(
+$user = new UsersUser(
     userId: 400,
     name: 'John Doe',
     address: new Address(city: 'Antwerp', postalCodes: ['2000', '2018']),
@@ -127,7 +137,7 @@ if ($user->toDenseJson() !== '[400,"John Doe",["Antwerp",["2000","2018"]],[["Bru
     throw new RuntimeException('Unexpected user dense JSON: '.$user->toDenseJson());
 }
 
-$decodedUser = User::fromDenseJson('[400,"John Doe",["Antwerp",["2000","2018"]],[["Brussels",["1000"]]]]');
+$decodedUser = UsersUser::fromDenseJson('[400,"John Doe",["Antwerp",["2000","2018"]],[["Brussels",["1000"]]]]');
 
 if ($decodedUser->address->city !== 'Antwerp' || $decodedUser->previousAddresses[0]->city !== 'Brussels') {
     throw new RuntimeException('Unexpected decoded user.');
@@ -154,7 +164,8 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
       });
 
       const generatedFiles = [
-        join(generatedPath, "Admin", "User.php"),
+        join(generatedPath, "Admin", "UsersUser.php"),
+        join(generatedPath, "Admin", "ProfilesUser.php"),
         join(generatedPath, "Admin", "SubscriptionStatus.php"),
         join(generatedPath, "Admin", "SkirMethods.php"),
         join(generatedPath, "Common", "Address.php"),
@@ -165,10 +176,15 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
         execFileSync("php", ["-l", generatedFile], { stdio: "pipe" });
       }
 
-      const userCode = readFileSync(join(generatedPath, "Admin", "User.php"), "utf8");
+      expect(existsSync(join(generatedPath, "Admin", "User.php"))).toBe(false);
+
+      const userCode = readFileSync(join(generatedPath, "Admin", "UsersUser.php"), "utf8");
+      const methodsCode = readFileSync(join(generatedPath, "Admin", "SkirMethods.php"), "utf8");
 
       expect(userCode).toContain("use App\\Skir\\Common\\Address;");
       expect(userCode).not.toContain("\\App\\Skir\\Common\\Address");
+      expect(methodsCode).toContain("requestType: UsersUser::skirType()");
+      expect(methodsCode).toContain("responseType: UsersUser::skirType()");
 
       execFileSync("composer", ["install", "--no-interaction", "--no-progress"], {
         cwd: projectPath,

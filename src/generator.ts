@@ -23,6 +23,7 @@ export interface SkirRecordLocation {
 
 export interface SkirRecord {
   readonly kind?: string;
+  readonly key?: unknown;
   readonly name: string | SkirToken;
   readonly recordType?: "struct" | "enum";
   readonly fields?: readonly SkirField[];
@@ -83,7 +84,13 @@ interface ModuleOutputContext {
   readonly namespace: string;
   readonly pathPrefix: string;
   readonly recordMap?: ReadonlyMap<string, SkirRecordLocation>;
+  readonly classNames?: ClassNameRegistry;
   readonly imports?: ImportRegistry;
+}
+
+interface ClassNameRegistry {
+  readonly namesByIdentity: ReadonlyMap<string, string>;
+  readonly namesByRecordKey: ReadonlyMap<string, string>;
 }
 
 interface ImportRegistry {
@@ -93,15 +100,16 @@ interface ImportRegistry {
 
 export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
   const namespace = input.config?.namespace ?? "App\\Skir";
+  const classNames = buildClassNameRegistry(namespace, input.modules);
   const methodGroups = new Map<string, { context: ModuleOutputContext; methods: SkirMethod[] }>();
   const recordFiles: GeneratedFile[] = [];
 
   for (const module of input.modules) {
-    const context = outputContextForModule(namespace, module, input.recordMap);
+    const context = outputContextForModule(namespace, module, input.recordMap, classNames);
 
     recordFiles.push(
       ...(module.records ?? [])
-        .map((record) => normalizeRecord(record))
+        .map((record, index) => normalizeRecord(record, module, index, classNames))
         .filter((record) => isStruct(record) || isEnum(record))
         .map((record) => isEnum(record)
           ? generateEnumFile(context, record)
@@ -453,6 +461,14 @@ interface RemovedDeclaration {
   readonly number: number;
 }
 
+interface ClassNameCandidate {
+  readonly identity: string;
+  readonly recordKey?: string;
+  readonly namespace: string;
+  readonly modulePath: string;
+  readonly baseClassName: string;
+}
+
 function collectStructFields(record: SkirRecord): TypedStructField[] {
   return collectDeclarations(record, "string")
     .filter((field): field is StructField => !isRemovedDeclaration(field))
@@ -497,15 +513,126 @@ function isEnum(record: SkirRecord): boolean {
   return record.recordType === "enum" || record.kind === "enum";
 }
 
-function normalizeRecord(record: SkirRecord | SkirRecordLocation): SkirRecord {
+function buildClassNameRegistry(rootNamespace: string, modules: readonly SkirModule[]): ClassNameRegistry {
+  const candidates = modules.flatMap((module) =>
+    (module.records ?? []).map((record, index): ClassNameCandidate => {
+      const modulePath = modulePathForRecord(module, record);
+      const baseClassName = "record" in record
+        ? classNameForRecordLocation(record)
+        : classNameForRecord(record);
+
+      return {
+        identity: recordIdentity(module, record, index),
+        recordKey: recordKeyForRecord(record),
+        namespace: outputContextForModulePath(rootNamespace, modulePath).namespace,
+        modulePath,
+        baseClassName,
+      };
+    }),
+  );
+  const candidatesByClass = new Map<string, ClassNameCandidate[]>();
+
+  for (const candidate of candidates) {
+    const groupKey = `${candidate.namespace}\\${candidate.baseClassName}`;
+    const existingCandidates = candidatesByClass.get(groupKey);
+
+    if (existingCandidates !== undefined) {
+      existingCandidates.push(candidate);
+    } else {
+      candidatesByClass.set(groupKey, [candidate]);
+    }
+  }
+
+  const namesByIdentity = new Map<string, string>();
+  const namesByRecordKey = new Map<string, string>();
+
+  for (const groupedCandidates of candidatesByClass.values()) {
+    for (const candidate of groupedCandidates) {
+      const className = groupedCandidates.length > 1
+        ? `${moduleClassPrefix(candidate.modulePath)}${candidate.baseClassName}`
+        : candidate.baseClassName;
+
+      namesByIdentity.set(candidate.identity, className);
+
+      if (candidate.recordKey !== undefined) {
+        namesByRecordKey.set(candidate.recordKey, className);
+      }
+    }
+  }
+
+  return {
+    namesByIdentity,
+    namesByRecordKey,
+  };
+}
+
+function modulePathForRecord(module: SkirModule, record: SkirRecord | SkirRecordLocation): string {
+  if ("record" in record) {
+    return record.modulePath ?? module.path;
+  }
+
+  return module.path;
+}
+
+function recordIdentity(module: SkirModule, record: SkirRecord | SkirRecordLocation, index: number): string {
+  return recordKeyForRecord(record) ?? `${module.path}:${index}`;
+}
+
+function recordKeyForRecord(record: SkirRecord | SkirRecordLocation): string | undefined {
+  const recordKey = "record" in record
+    ? record.record.key
+    : record.key;
+
+  return typeof recordKey === "string" ? recordKey : undefined;
+}
+
+function classNameFromRegistry(classNames: ClassNameRegistry | undefined, identity: string | undefined, recordKey: unknown): string | undefined {
+  if (classNames === undefined) {
+    return undefined;
+  }
+
+  if (typeof recordKey === "string") {
+    const className = classNames.namesByRecordKey.get(recordKey);
+
+    if (className !== undefined) {
+      return className;
+    }
+  }
+
+  if (identity !== undefined) {
+    return classNames.namesByIdentity.get(identity);
+  }
+
+  return undefined;
+}
+
+function moduleClassPrefix(modulePath: string): string {
+  const moduleFileName = modulePath.split("/").at(-1) ?? modulePath;
+  const moduleName = moduleFileName.replace(/\.skir$/, "");
+
+  return toClassName(moduleName);
+}
+
+function normalizeRecord(record: SkirRecord | SkirRecordLocation, module: SkirModule, index: number, classNames: ClassNameRegistry): SkirRecord {
   if ("record" in record) {
     return {
       ...record.record,
-      phpClassName: classNameForRecordLocation(record),
+      phpClassName: classNameFromRegistry(
+        classNames,
+        recordIdentity(module, record, index),
+        record.record.key,
+      ) ?? classNameForRecordLocation(record),
     };
   }
 
-  return record;
+  return {
+    ...record,
+    phpClassName: classNameFromRegistry(
+      classNames,
+      recordIdentity(module, record, index),
+      record.key,
+    ) ?? record.phpClassName,
+  };
 }
 
 function isRemovedDeclaration(declaration: StructDeclaration): declaration is RemovedDeclaration {
@@ -681,11 +808,16 @@ function classNameForRecord(record: SkirRecord): string {
 }
 
 function classNameForRecordReference(context: ModuleOutputContext, recordLocation: SkirRecordLocation): string {
-  const className = classNameForRecordLocation(recordLocation);
+  const className = classNameFromRegistry(
+    context.classNames,
+    undefined,
+    recordLocation.record.key,
+  ) ?? classNameForRecordLocation(recordLocation);
   const recordContext = outputContextForModulePath(
     context.rootNamespace,
     recordLocation.modulePath ?? "",
     context.recordMap,
+    context.classNames,
   );
 
   if (recordContext.namespace === context.namespace) {
@@ -695,11 +827,11 @@ function classNameForRecordReference(context: ModuleOutputContext, recordLocatio
   return importedClassName(context, `${recordContext.namespace}\\${className}`);
 }
 
-function outputContextForModule(rootNamespace: string, module: SkirModule, recordMap?: ReadonlyMap<string, SkirRecordLocation>): ModuleOutputContext {
-  return outputContextForModulePath(rootNamespace, module.path, recordMap);
+function outputContextForModule(rootNamespace: string, module: SkirModule, recordMap?: ReadonlyMap<string, SkirRecordLocation>, classNames?: ClassNameRegistry): ModuleOutputContext {
+  return outputContextForModulePath(rootNamespace, module.path, recordMap, classNames);
 }
 
-function outputContextForModulePath(rootNamespace: string, modulePath: string, recordMap?: ReadonlyMap<string, SkirRecordLocation>): ModuleOutputContext {
+function outputContextForModulePath(rootNamespace: string, modulePath: string, recordMap?: ReadonlyMap<string, SkirRecordLocation>, classNames?: ClassNameRegistry): ModuleOutputContext {
   const directoryParts = modulePath
     .split("/")
     .slice(0, -1)
@@ -712,6 +844,7 @@ function outputContextForModulePath(rootNamespace: string, modulePath: string, r
       namespace: rootNamespace,
       pathPrefix: "",
       recordMap,
+      classNames,
     };
   }
 
@@ -720,6 +853,7 @@ function outputContextForModulePath(rootNamespace: string, modulePath: string, r
     namespace: [rootNamespace, ...directoryParts].join("\\"),
     pathPrefix: directoryParts.join("/"),
     recordMap,
+    classNames,
   };
 }
 
