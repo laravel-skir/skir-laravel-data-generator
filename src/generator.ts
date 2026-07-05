@@ -75,41 +75,63 @@ export interface GeneratedFile {
   readonly code: string;
 }
 
+interface ModuleOutputContext {
+  readonly namespace: string;
+  readonly pathPrefix: string;
+}
+
 export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
   const namespace = input.config?.namespace ?? "App\\Skir";
-  const recordFiles = input.modules.flatMap((module) =>
-    (module.records ?? [])
-      .map((record) => normalizeRecord(record))
-      .filter((record) => isStruct(record) || isEnum(record))
-      .map((record) => isEnum(record)
-        ? generateEnumFile(namespace, record)
-        : generateStructFile(namespace, record)),
-  );
+  const methodGroups = new Map<string, { context: ModuleOutputContext; methods: SkirMethod[] }>();
+  const recordFiles: GeneratedFile[] = [];
 
-  const methods = input.modules.flatMap((module) => module.methods ?? []);
+  for (const module of input.modules) {
+    const context = outputContextForModule(namespace, module);
 
-  if (methods.length === 0) {
-    return recordFiles;
+    recordFiles.push(
+      ...(module.records ?? [])
+        .map((record) => normalizeRecord(record))
+        .filter((record) => isStruct(record) || isEnum(record))
+        .map((record) => isEnum(record)
+          ? generateEnumFile(context, record)
+          : generateStructFile(context, record)),
+    );
+
+    const methods = module.methods ?? [];
+
+    if (methods.length > 0) {
+      const groupKey = `${context.namespace}\n${context.pathPrefix}`;
+      const existingGroup = methodGroups.get(groupKey);
+
+      if (existingGroup !== undefined) {
+        existingGroup.methods.push(...methods);
+      } else {
+        methodGroups.set(groupKey, {
+          context,
+          methods: [...methods],
+        });
+      }
+    }
   }
 
   return [
     ...recordFiles,
-    generateMethodsFile(namespace, methods),
+    ...Array.from(methodGroups.values()).map((group) => generateMethodsFile(group.context, group.methods)),
   ];
 }
 
-function generateStructFile(namespace: string, record: SkirRecord): GeneratedFile {
+function generateStructFile(context: ModuleOutputContext, record: SkirRecord): GeneratedFile {
   const className = classNameForRecord(record);
   const fields = collectStructFields(record);
 
   return {
-    path: `${className}.php`,
+    path: outputPath(context, `${className}.php`),
     code: [
       "<?php",
       "",
       "declare(strict_types=1);",
       "",
-      `namespace ${namespace};`,
+      `namespace ${context.namespace};`,
       "",
       "use LaravelSkir\\Runtime\\DenseJson;",
       "use LaravelSkir\\Runtime\\Field;",
@@ -213,18 +235,18 @@ function generateFromDenseJson(className: string): string {
   ].join("\n");
 }
 
-function generateEnumFile(namespace: string, record: SkirRecord): GeneratedFile {
+function generateEnumFile(context: ModuleOutputContext, record: SkirRecord): GeneratedFile {
   const className = classNameForRecord(record);
   const variants = collectDeclarations(record);
 
   return {
-    path: `${className}.php`,
+    path: outputPath(context, `${className}.php`),
     code: [
       "<?php",
       "",
       "declare(strict_types=1);",
       "",
-      `namespace ${namespace};`,
+      `namespace ${context.namespace};`,
       "",
       "use LaravelSkir\\Runtime\\DenseJson;",
       "use LaravelSkir\\Runtime\\EnumValue;",
@@ -331,15 +353,15 @@ function generateEnumFromDenseJson(className: string): string {
   ].join("\n");
 }
 
-function generateMethodsFile(namespace: string, methods: readonly SkirMethod[]): GeneratedFile {
+function generateMethodsFile(context: ModuleOutputContext, methods: readonly SkirMethod[]): GeneratedFile {
   return {
-    path: "SkirMethods.php",
+    path: outputPath(context, "SkirMethods.php"),
     code: [
       "<?php",
       "",
       "declare(strict_types=1);",
       "",
-      `namespace ${namespace};`,
+      `namespace ${context.namespace};`,
       "",
       "use LaravelSkir\\Runtime\\MethodDescriptor;",
       "",
@@ -618,6 +640,34 @@ function recordTypeClassName(type: SkirType): string {
 
 function classNameForRecord(record: SkirRecord): string {
   return record.phpClassName ?? toClassName(tokenText(record.name));
+}
+
+function outputContextForModule(rootNamespace: string, module: SkirModule): ModuleOutputContext {
+  const directoryParts = module.path
+    .split("/")
+    .slice(0, -1)
+    .map((part) => toClassName(part))
+    .filter((part) => part !== "");
+
+  if (directoryParts.length === 0) {
+    return {
+      namespace: rootNamespace,
+      pathPrefix: "",
+    };
+  }
+
+  return {
+    namespace: [rootNamespace, ...directoryParts].join("\\"),
+    pathPrefix: directoryParts.join("/"),
+  };
+}
+
+function outputPath(context: ModuleOutputContext, fileName: string): string {
+  if (context.pathPrefix === "") {
+    return fileName;
+  }
+
+  return `${context.pathPrefix}/${fileName}`;
 }
 
 function classNameForRecordLocation(record: SkirRecordLocation): string {

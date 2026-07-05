@@ -10,6 +10,7 @@ describe("skir CLI integration", () => {
   it("generates executable PHP from a real .skir fixture", () => {
     const projectPath = mkdtempSync(join(tmpdir(), "skir-php-cli-"));
     const skirSourcePath = join(projectPath, "skir-src");
+    const adminSkirSourcePath = join(skirSourcePath, "admin");
     const generatedPath = join(projectPath, "generated", "skirout");
     const runtimePath = process.env.SKIR_RUNTIME_PATH ?? resolve("../runtime");
     const generatorPath = resolve("dist/index.js");
@@ -18,7 +19,7 @@ describe("skir CLI integration", () => {
     expect(existsSync(generatorPath)).toBe(true);
     expect(existsSync(skirBinPath)).toBe(true);
 
-    mkdirSync(skirSourcePath, { recursive: true });
+    mkdirSync(adminSkirSourcePath, { recursive: true });
 
     writeFileSync(
       join(projectPath, "skir.yml"),
@@ -33,7 +34,7 @@ describe("skir CLI integration", () => {
     );
 
     writeFileSync(
-      join(skirSourcePath, "users.skir"),
+      join(adminSkirSourcePath, "users.skir"),
       [
         "struct Address {",
         "  city: string;",
@@ -98,10 +99,10 @@ declare(strict_types=1);
 
 require __DIR__.'/vendor/autoload.php';
 
-use App\\Skir\\Address;
-use App\\Skir\\SkirMethods;
-use App\\Skir\\SubscriptionStatus;
-use App\\Skir\\User;
+use App\\Skir\\Admin\\Address;
+use App\\Skir\\Admin\\SkirMethods;
+use App\\Skir\\Admin\\SubscriptionStatus;
+use App\\Skir\\Admin\\User;
 
 $user = new User(
     userId: 400,
@@ -142,10 +143,17 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
         stdio: "pipe",
       });
 
-      expect(existsSync(join(generatedPath, "Address.php"))).toBe(true);
-      expect(existsSync(join(generatedPath, "User.php"))).toBe(true);
-      expect(existsSync(join(generatedPath, "SubscriptionStatus.php"))).toBe(true);
-      expect(existsSync(join(generatedPath, "SkirMethods.php"))).toBe(true);
+      const generatedFiles = [
+        join(generatedPath, "Admin", "Address.php"),
+        join(generatedPath, "Admin", "User.php"),
+        join(generatedPath, "Admin", "SubscriptionStatus.php"),
+        join(generatedPath, "Admin", "SkirMethods.php"),
+      ];
+
+      for (const generatedFile of generatedFiles) {
+        expect(existsSync(generatedFile)).toBe(true);
+        execFileSync("php", ["-l", generatedFile], { stdio: "pipe" });
+      }
 
       execFileSync("composer", ["install", "--no-interaction", "--no-progress"], {
         cwd: projectPath,

@@ -116,6 +116,54 @@ describe("generatePhpFiles", () => {
     expect(methodFile?.code).toContain("responseType: User::skirType()");
   });
 
+  it("uses module directories as PHP subnamespaces and output directories", () => {
+    const files = generatePhpFiles({
+      config: {
+        namespace: "App\\Skir",
+      },
+      modules: [
+        {
+          path: "admin/users.skir",
+          records: [
+            {
+              kind: "struct",
+              name: "GetUserRequest",
+              fields: [
+                { kind: "field", name: "user_id", number: 0, type: { kind: "int32" } },
+              ],
+            },
+            {
+              kind: "struct",
+              name: "User",
+              fields: [
+                { kind: "field", name: "name", number: 0, type: { kind: "string" } },
+              ],
+            },
+          ],
+          methods: [
+            {
+              kind: "method",
+              name: "GetUser",
+              number: 3180856469,
+              requestType: { kind: "record", name: "GetUserRequest" },
+              responseType: { kind: "record", name: "User" },
+            },
+          ],
+        },
+      ],
+    });
+
+    const userFile = files.find((file) => file.path === "Admin/User.php");
+    const requestFile = files.find((file) => file.path === "Admin/GetUserRequest.php");
+    const methodsFile = files.find((file) => file.path === "Admin/SkirMethods.php");
+
+    expect(userFile?.code).toContain("namespace App\\Skir\\Admin;");
+    expect(requestFile?.code).toContain("namespace App\\Skir\\Admin;");
+    expect(methodsFile?.code).toContain("namespace App\\Skir\\Admin;");
+    expect(methodsFile?.code).toContain("requestType: GetUserRequest::skirType()");
+    expect(methodsFile?.code).toContain("responseType: User::skirType()");
+  });
+
   it("types and normalizes generated record fields", () => {
     const files = generatePhpFiles({
       config: {

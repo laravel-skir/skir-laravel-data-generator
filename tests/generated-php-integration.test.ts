@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -100,7 +100,11 @@ describe("generated PHP", () => {
     });
 
     for (const file of files) {
-      writeFileSync(join(sourcePath, file.path), file.code);
+      const filePath = join(sourcePath, file.path);
+
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, file.code);
+      execFileSync("php", ["-l", filePath], { stdio: "pipe" });
     }
 
     writeFileSync(
