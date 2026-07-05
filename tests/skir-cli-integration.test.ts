@@ -302,6 +302,8 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
         join(generatedPath, "Admin", "ProfilesUserData.php"),
         join(generatedPath, "Admin", "SubscriptionStatusData.php"),
         join(generatedPath, "Admin", "SkirMethods.php"),
+        join(generatedPath, "Admin", "SkirProcedureProvider.php"),
+        join(generatedPath, "Admin", "SkirProcedures.php"),
         join(generatedPath, "Admin", "SkirRpcClient.php"),
         join(generatedPath, "Common", "AddressData.php"),
       ];
@@ -315,12 +317,14 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
 
       const userCode = readFileSync(join(generatedPath, "Admin", "UsersUserData.php"), "utf8");
       const methodsCode = readFileSync(join(generatedPath, "Admin", "SkirMethods.php"), "utf8");
+      const providerCode = readFileSync(join(generatedPath, "Admin", "SkirProcedureProvider.php"), "utf8");
       const clientCode = readFileSync(join(generatedPath, "Admin", "SkirRpcClient.php"), "utf8");
 
       expect(userCode).toContain("use App\\Skir\\Common\\AddressData;");
       expect(userCode).not.toContain("\\App\\Skir\\Common\\AddressData");
       expect(methodsCode).toContain("requestType: UsersUserData::skirType()");
       expect(methodsCode).toContain("responseType: UsersUserData::skirType()");
+      expect(providerCode).toContain("namespace App\\Skir\\Admin;");
       expect(clientCode).toContain("public function getUser(UsersUserData $request): UsersUserData");
 
     if (existsSync(join(projectPath, "vendor", "autoload.php"))) {

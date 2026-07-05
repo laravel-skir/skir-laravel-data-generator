@@ -296,6 +296,15 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
       stdio: "inherit",
     });
 
-    expect(files.map((file) => file.path).sort()).toEqual(["AddressData.php", "HealthCheckRequestData.php", "SkirMethods.php", "SkirRpcClient.php", "SubscriptionStatusData.php", "UserData.php"]);
+    expect(files.map((file) => file.path).sort()).toEqual([
+      "AddressData.php",
+      "HealthCheckRequestData.php",
+      "SkirMethods.php",
+      "SkirProcedureProvider.php",
+      "SkirProcedures.php",
+      "SkirRpcClient.php",
+      "SubscriptionStatusData.php",
+      "UserData.php",
+    ]);
   }, 180_000);
 });

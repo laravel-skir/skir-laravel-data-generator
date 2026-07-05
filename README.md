@@ -59,6 +59,22 @@ $user = $client->getUser($requestData);
 
 Responses are hydrated through `makeFromSkirPayload()`, so Laravel Data validation is still applied to returned struct objects.
 
+For servers, the generator emits `SkirProcedures.php` and `SkirProcedureProvider.php`. Implement the generated interface and register the generated provider on a Laravel Skir endpoint:
+
+```php
+use App\Skir\Admin\SkirProcedureProvider;
+use App\Skir\Admin\SkirProcedures;
+use Illuminate\Support\Facades\Route;
+
+$this->app->bind(SkirProcedures::class, AdminProcedures::class);
+
+Route::skirRpc('/api/skir', [
+    SkirProcedureProvider::class,
+]);
+```
+
+Incoming struct requests are hydrated with `makeFromSkirPayload()`, so Laravel Data validation also runs before your procedure implementation is called.
+
 ## Namespaces and modules
 
 The configured namespace defaults to `App\Skir`. Module directories become PHP subnamespaces and output directories:
@@ -71,4 +87,4 @@ When two generated records would otherwise use the same PHP class name in the sa
 
 ## Current scope
 
-This package generates Laravel Data DTOs, method descriptors, and typed client adapters. Server routing lives in a separate package.
+This package generates Laravel Data DTOs, method descriptors, typed client adapters, and Laravel Skir server procedure adapters. Server routing lives in a separate package.

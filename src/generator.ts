@@ -139,6 +139,8 @@ export function generateLaravelDataFiles(input: PhpGeneratorInput): GeneratedFil
     ...Array.from(methodGroups.values()).flatMap((group) => [
       generateMethodsFile(group.context, group.methods),
       generateClientFile(group.context, group.methods),
+      generateProceduresFile(group.context, group.methods),
+      generateProcedureProviderFile(group.context, group.methods),
     ]),
   ];
 }
@@ -596,6 +598,101 @@ function generateClientMethod(method: SkirMethod, context: ModuleOutputContext):
     "",
     `    return ${response};`,
     "}",
+  ].join("\n");
+}
+
+function generateProceduresFile(context: ModuleOutputContext, methods: readonly SkirMethod[]): GeneratedFile {
+  const runtimeImports = [
+    "LaravelSkir\\Server\\RequestContext",
+  ];
+  const fileContext = fileOutputContext(context, "SkirProcedures", runtimeImports);
+  const procedureMethods = methods.map((method) => generateProcedureMethod(method, fileContext)).join("\n\n");
+
+  return {
+    path: outputPath(context, "SkirProcedures.php"),
+    code: [
+      "<?php",
+      "",
+      "declare(strict_types=1);",
+      "",
+      `namespace ${context.namespace};`,
+      "",
+      ...generateUseStatements(fileContext, runtimeImports),
+      "",
+      "interface SkirProcedures",
+      "{",
+      indent(procedureMethods),
+      "}",
+      "",
+    ].join("\n"),
+  };
+}
+
+function generateProcedureMethod(method: SkirMethod, context: ModuleOutputContext): string {
+  const methodName = toPropertyName(tokenText(method.name));
+  const requestType = method.requestType ?? "string";
+  const responseType = method.responseType ?? "string";
+
+  return `public function ${methodName}(${phpType(requestType, context)} $request, RequestContext $context): ${phpType(responseType, context)};`;
+}
+
+function generateProcedureProviderFile(context: ModuleOutputContext, methods: readonly SkirMethod[]): GeneratedFile {
+  const runtimeImports = [
+    "LaravelSkir\\Server\\ProcedureProvider",
+    "LaravelSkir\\Server\\RequestContext",
+    "LaravelSkir\\Server\\SkirServer",
+  ];
+  const fileContext = fileOutputContext(context, "SkirProcedureProvider", runtimeImports);
+  const registrations = methods.map((method) => generateProcedureRegistration(method, fileContext)).join("\n\n");
+
+  return {
+    path: outputPath(context, "SkirProcedureProvider.php"),
+    code: [
+      "<?php",
+      "",
+      "declare(strict_types=1);",
+      "",
+      `namespace ${context.namespace};`,
+      "",
+      ...generateUseStatements(fileContext, runtimeImports),
+      "",
+      "final readonly class SkirProcedureProvider implements ProcedureProvider",
+      "{",
+      indent(generateProcedureProviderConstructor()),
+      "",
+      indent([
+        "public function register(SkirServer $server): void",
+        "{",
+        indent(registrations),
+        "}",
+      ].join("\n")),
+      "}",
+      "",
+    ].join("\n"),
+  };
+}
+
+function generateProcedureProviderConstructor(): string {
+  return [
+    "public function __construct(",
+    "    private SkirProcedures $procedures,",
+    ") {}",
+  ].join("\n");
+}
+
+function generateProcedureRegistration(method: SkirMethod, context: ModuleOutputContext): string {
+  const methodName = toPropertyName(tokenText(method.name));
+  const requestType = method.requestType ?? "string";
+  const responseType = method.responseType ?? "string";
+  const request = clientResponseExpression(requestType, "$request", context);
+  const response = valueToArrayExpression(responseType, "$response", context);
+
+  return [
+    `$server->addMethod(SkirMethods::${methodName}(), function (mixed $request, RequestContext $context): mixed {`,
+    `    $response = $this->procedures->${methodName}(${request}, $context);`,
+    "",
+    `    return ${response};`,
+    "});",
   ].join("\n");
 }
 
