@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { generatePhpFiles } from "../src/generator.js";
+import { generateLaravelDataFiles } from "../src/generator.js";
 
-describe("generatePhpFiles", () => {
-  it("generates a PHP readonly class for a Skir struct", () => {
-    const files = generatePhpFiles({
+describe("generateLaravelDataFiles", () => {
+  it("generates a Laravel Data class for a Skir struct", () => {
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -27,17 +27,21 @@ describe("generatePhpFiles", () => {
     });
 
     expect(files).toHaveLength(1);
-    expect(files[0]?.path).toBe("User.php");
+    expect(files[0]?.path).toBe("UserData.php");
     expect(files[0]?.code).toContain("namespace App\\Skir;");
-    expect(files[0]?.code).toContain("final readonly class User");
+    expect(files[0]?.code).toContain("use Spatie\\LaravelData\\Data;");
+    expect(files[0]?.code).toContain("final class UserData extends Data");
+    expect(files[0]?.code).toContain("#[MapInputName('user_id')]");
     expect(files[0]?.code).toContain("public int $userId");
     expect(files[0]?.code).toContain("public string $name");
     expect(files[0]?.code).toContain("Field::removed(1)");
-    expect(files[0]?.code).toContain("DenseJson::toJson(self::skirType(), $this->toArray())");
+    expect(files[0]?.code).toContain("public static function fromSkir(string $json): UserData");
+    expect(files[0]?.code).toContain("return self::factory()->withoutMagicalCreation()->alwaysValidate()->from($payload);");
+    expect(files[0]?.code).toContain("DenseJson::toJson(self::skirType(), $this->toSkirArray())");
   });
 
-  it("generates instantiable PHP classes for empty Skir structs", () => {
-    const files = generatePhpFiles({
+  it("generates instantiable Laravel Data classes for empty Skir structs", () => {
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -55,12 +59,13 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    expect(files[0]?.code).toContain("final readonly class HealthCheckRequest");
+    expect(files[0]?.path).toBe("HealthCheckRequestData.php");
+    expect(files[0]?.code).toContain("final class HealthCheckRequestData extends Data");
     expect(files[0]?.code).not.toContain("__construct");
   });
 
-  it("generates a PHP readonly class for a Skir enum", () => {
-    const files = generatePhpFiles({
+  it("generates a PHP wrapper class for a Skir enum", () => {
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -83,21 +88,21 @@ describe("generatePhpFiles", () => {
     });
 
     expect(files).toHaveLength(1);
-    expect(files[0]?.path).toBe("SubscriptionStatus.php");
-    expect(files[0]?.code).toContain("final readonly class SubscriptionStatus");
+    expect(files[0]?.path).toBe("SubscriptionStatusData.php");
+    expect(files[0]?.code).toContain("final readonly class SubscriptionStatusData");
     expect(files[0]?.code).toContain("public static function free(): self");
     expect(files[0]?.code).toContain("public static function premiumSince(int $value): self");
     expect(files[0]?.code).toContain("Variant::constant('free', 1)");
     expect(files[0]?.code).toContain("Variant::wrapper('premium_since', 2, Type::timestamp())");
     expect(files[0]?.code).toContain("EnumValue::wrapper('premium_since', $value)");
     expect(files[0]?.code).toContain("public function toSkirValue(): EnumValue");
-    expect(files[0]?.code).toContain("public static function fromSkirValue(EnumValue $value): SubscriptionStatus");
+    expect(files[0]?.code).toContain("public static function fromSkirValue(EnumValue $value): SubscriptionStatusData");
     expect(files[0]?.code).toContain("public function toDenseValue(): int|array");
-    expect(files[0]?.code).toContain("public static function fromDenseValue(int|array $value): SubscriptionStatus");
+    expect(files[0]?.code).toContain("public static function fromDenseValue(int|array $value): SubscriptionStatusData");
   });
 
   it("generates PHP method descriptors for SkirRPC methods", () => {
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -139,12 +144,12 @@ describe("generatePhpFiles", () => {
     expect(methodFile?.code).toContain("public static function getUser(): MethodDescriptor");
     expect(methodFile?.code).toContain("name: 'GetUser'");
     expect(methodFile?.code).toContain("number: 3180856469");
-    expect(methodFile?.code).toContain("requestType: GetUserRequest::skirType()");
-    expect(methodFile?.code).toContain("responseType: User::skirType()");
+    expect(methodFile?.code).toContain("requestType: GetUserRequestData::skirType()");
+    expect(methodFile?.code).toContain("responseType: UserData::skirType()");
   });
 
   it("uses module directories as PHP subnamespaces and output directories", () => {
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -180,15 +185,15 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const userFile = files.find((file) => file.path === "Admin/User.php");
-    const requestFile = files.find((file) => file.path === "Admin/GetUserRequest.php");
+    const userFile = files.find((file) => file.path === "Admin/UserData.php");
+    const requestFile = files.find((file) => file.path === "Admin/GetUserRequestData.php");
     const methodsFile = files.find((file) => file.path === "Admin/SkirMethods.php");
 
     expect(userFile?.code).toContain("namespace App\\Skir\\Admin;");
     expect(requestFile?.code).toContain("namespace App\\Skir\\Admin;");
     expect(methodsFile?.code).toContain("namespace App\\Skir\\Admin;");
-    expect(methodsFile?.code).toContain("requestType: GetUserRequest::skirType()");
-    expect(methodsFile?.code).toContain("responseType: User::skirType()");
+    expect(methodsFile?.code).toContain("requestType: GetUserRequestData::skirType()");
+    expect(methodsFile?.code).toContain("responseType: UserData::skirType()");
   });
 
   it("qualifies record references from other module namespaces", () => {
@@ -201,7 +206,7 @@ describe("generatePhpFiles", () => {
       ],
     };
 
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -241,13 +246,13 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const userFile = files.find((file) => file.path === "Admin/User.php");
+    const userFile = files.find((file) => file.path === "Admin/UserData.php");
 
-    expect(userFile?.code).toContain("use App\\Skir\\Common\\Address;");
-    expect(userFile?.code).toContain("public Address $address");
-    expect(userFile?.code).toContain("Field::value('address', 0, Address::skirType())");
-    expect(userFile?.code).toContain("address: Address::fromArray($data['address'])");
-    expect(userFile?.code).not.toContain("\\App\\Skir\\Common\\Address");
+    expect(userFile?.code).toContain("use App\\Skir\\Common\\AddressData;");
+    expect(userFile?.code).toContain("public AddressData $address");
+    expect(userFile?.code).toContain("Field::value('address', 0, AddressData::skirType())");
+    expect(userFile?.code).toContain("'address' => $data['address']");
+    expect(userFile?.code).not.toContain("\\App\\Skir\\Common\\AddressData");
   });
 
   it("keeps fully qualified record references when an import would collide", () => {
@@ -260,7 +265,7 @@ describe("generatePhpFiles", () => {
       ],
     };
 
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -300,11 +305,11 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const addressFile = files.find((file) => file.path === "Admin/Address.php");
+    const addressFile = files.find((file) => file.path === "Admin/AddressData.php");
 
-    expect(addressFile?.code).not.toContain("use App\\Skir\\Common\\Address;");
-    expect(addressFile?.code).toContain("public \\App\\Skir\\Common\\Address $billingAddress");
-    expect(addressFile?.code).toContain("Field::value('billing_address', 0, \\App\\Skir\\Common\\Address::skirType())");
+    expect(addressFile?.code).not.toContain("use App\\Skir\\Common\\AddressData;");
+    expect(addressFile?.code).toContain("public \\App\\Skir\\Common\\AddressData $billingAddress");
+    expect(addressFile?.code).toContain("Field::value('billing_address', 0, \\App\\Skir\\Common\\AddressData::skirType())");
   });
 
   it("disambiguates duplicate class names in the same PHP namespace", () => {
@@ -347,7 +352,7 @@ describe("generatePhpFiles", () => {
       ],
     };
 
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -417,19 +422,19 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const usersUserFile = files.find((file) => file.path === "Admin/UsersUser.php");
-    const profilesUserFile = files.find((file) => file.path === "Admin/ProfilesUser.php");
-    const auditFile = files.find((file) => file.path === "Admin/Audit.php");
+    const usersUserFile = files.find((file) => file.path === "Admin/UsersUserData.php");
+    const profilesUserFile = files.find((file) => file.path === "Admin/ProfilesUserData.php");
+    const auditFile = files.find((file) => file.path === "Admin/AuditData.php");
 
-    expect(files.map((file) => file.path)).not.toContain("Admin/User.php");
-    expect(usersUserFile?.code).toContain("final readonly class UsersUser");
-    expect(profilesUserFile?.code).toContain("final readonly class ProfilesUser");
-    expect(auditFile?.code).toContain("public UsersUser $actor");
-    expect(auditFile?.code).toContain("Field::value('actor', 0, UsersUser::skirType())");
+    expect(files.map((file) => file.path)).not.toContain("Admin/UserData.php");
+    expect(usersUserFile?.code).toContain("final class UsersUserData extends Data");
+    expect(profilesUserFile?.code).toContain("final class ProfilesUserData extends Data");
+    expect(auditFile?.code).toContain("public UsersUserData $actor");
+    expect(auditFile?.code).toContain("Field::value('actor', 0, UsersUserData::skirType())");
   });
 
   it("types and normalizes generated record fields", () => {
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -456,15 +461,15 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const userFile = files.find((file) => file.path === "User.php");
+    const userFile = files.find((file) => file.path === "UserData.php");
 
-    expect(userFile?.code).toContain("public Address $address");
-    expect(userFile?.code).toContain("'address' => $this->address->toArray()");
-    expect(userFile?.code).toContain("address: Address::fromArray($data['address'])");
+    expect(userFile?.code).toContain("public AddressData $address");
+    expect(userFile?.code).toContain("'address' => $this->address->toSkirArray()");
+    expect(userFile?.code).toContain("'address' => $data['address']");
   });
 
   it("normalizes generated enum fields through Skir runtime values", () => {
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -491,16 +496,16 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const userFile = files.find((file) => file.path === "User.php");
+    const userFile = files.find((file) => file.path === "UserData.php");
 
     expect(userFile?.code).toContain("'subscription_status' => $this->subscriptionStatus->toSkirValue()");
-    expect(userFile?.code).toContain("subscriptionStatus: SubscriptionStatus::fromSkirValue($data['subscription_status'])");
+    expect(userFile?.code).toContain("'subscription_status' => SubscriptionStatusData::fromSkirValue($data['subscription_status'])");
     expect(userFile?.code).not.toContain("$this->subscriptionStatus->toArray()");
-    expect(userFile?.code).not.toContain("SubscriptionStatus::fromArray($data['subscription_status'])");
+    expect(userFile?.code).not.toContain("SubscriptionStatusData::fromArray($data['subscription_status'])");
   });
 
   it("normalizes optional generated enum fields through Skir runtime values", () => {
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -539,12 +544,12 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const userFile = files.find((file) => file.path === "User.php");
+    const userFile = files.find((file) => file.path === "UserData.php");
 
     expect(userFile?.code).toContain("'subscription_status' => $this->subscriptionStatus === null ? null : $this->subscriptionStatus->toSkirValue()");
-    expect(userFile?.code).toContain("subscriptionStatus: $data['subscription_status'] === null ? null : SubscriptionStatus::fromSkirValue($data['subscription_status'])");
+    expect(userFile?.code).toContain("'subscription_status' => $data['subscription_status'] === null ? null : SubscriptionStatusData::fromSkirValue($data['subscription_status'])");
     expect(userFile?.code).not.toContain("$this->subscriptionStatus->toArray()");
-    expect(userFile?.code).not.toContain("SubscriptionStatus::fromArray($data['subscription_status'])");
+    expect(userFile?.code).not.toContain("SubscriptionStatusData::fromArray($data['subscription_status'])");
   });
 
   it("flattens nested Skir record locations into stable PHP class names", () => {
@@ -577,7 +582,7 @@ describe("generatePhpFiles", () => {
       ],
     };
 
-    const files = generatePhpFiles({
+    const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
       },
@@ -600,12 +605,12 @@ describe("generatePhpFiles", () => {
       ],
     });
 
-    const envelopeFile = files.find((file) => file.path === "Envelope.php");
-    const metadataFile = files.find((file) => file.path === "EnvelopeMetadata.php");
+    const envelopeFile = files.find((file) => file.path === "EnvelopeData.php");
+    const metadataFile = files.find((file) => file.path === "EnvelopeMetadataData.php");
 
-    expect(metadataFile?.code).toContain("final readonly class EnvelopeMetadata");
-    expect(envelopeFile?.code).toContain("public EnvelopeMetadata $metadata");
-    expect(envelopeFile?.code).toContain("Field::value('metadata', 0, EnvelopeMetadata::skirType())");
-    expect(envelopeFile?.code).toContain("metadata: EnvelopeMetadata::fromArray($data['metadata'])");
+    expect(metadataFile?.code).toContain("final class EnvelopeMetadataData extends Data");
+    expect(envelopeFile?.code).toContain("public EnvelopeMetadataData $metadata");
+    expect(envelopeFile?.code).toContain("Field::value('metadata', 0, EnvelopeMetadataData::skirType())");
+    expect(envelopeFile?.code).toContain("'metadata' => $data['metadata']");
   });
 });

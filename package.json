@@ -1,22 +1,23 @@
 {
-  "name": "skir-php-generator",
+  "name": "skir-laravel-data-generator",
   "version": "0.1.0",
-  "description": "Skir code generator for standard PHP data objects.",
+  "description": "Skir code generator for Spatie Laravel Data objects.",
   "type": "module",
   "license": "MIT",
   "author": {
     "name": "Maxim Kerstens",
     "email": "maxim.kerstens@gmail.com"
   },
-  "homepage": "https://github.com/laravel-skir/skir-php-generator#readme",
+  "homepage": "https://github.com/laravel-skir/skir-laravel-data-generator#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/laravel-skir/skir-php-generator.git"
+    "url": "git+https://github.com/laravel-skir/skir-laravel-data-generator.git"
   },
   "bugs": {
-    "url": "https://github.com/laravel-skir/skir-php-generator/issues"
+    "url": "https://github.com/laravel-skir/skir-laravel-data-generator/issues"
   },
   "keywords": [
+    "laravel-data",
     "php",
     "rpc",
     "skir",

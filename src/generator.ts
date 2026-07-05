@@ -99,7 +99,7 @@ interface ImportRegistry {
   readonly imports: Map<string, string>;
 }
 
-export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
+export function generateLaravelDataFiles(input: PhpGeneratorInput): GeneratedFile[] {
   const namespace = input.config?.namespace ?? "App\\Skir";
   const classNames = buildClassNameRegistry(namespace, input.modules);
   const methodGroups = new Map<string, { context: ModuleOutputContext; methods: SkirMethod[] }>();
@@ -147,18 +147,21 @@ function generateStructFile(context: ModuleOutputContext, record: SkirRecord): G
     "LaravelSkir\\Runtime\\DenseJson",
     "LaravelSkir\\Runtime\\Field",
     "LaravelSkir\\Runtime\\Type",
+    "Spatie\\LaravelData\\Attributes\\DataCollectionOf",
+    "Spatie\\LaravelData\\Attributes\\MapInputName",
+    "Spatie\\LaravelData\\Data",
   ];
   const fileContext = fileOutputContext(context, className, runtimeImports);
   const constructor = generateConstructor(fields, fileContext);
   const skirType = generateSkirType(record, fileContext);
-  const fromArray = generateFromArray(className, fields, fileContext);
   const classMembers = [
     constructor,
     skirType,
-    generateToArray(fields, fileContext),
-    fromArray,
-    generateToDenseJson(),
-    generateFromDenseJson(className),
+    generateToSkirArray(fields, fileContext),
+    generateMakeFromSkirPayload(fields, fileContext),
+    generateFromSkir(className),
+    generateToSkir(),
+    generateToSkirJson(),
   ].filter((member): member is string => member !== null);
 
   return {
@@ -172,7 +175,7 @@ function generateStructFile(context: ModuleOutputContext, record: SkirRecord): G
       "",
       ...generateUseStatements(fileContext, runtimeImports),
       "",
-      `final readonly class ${className}`,
+      `final class ${className} extends Data`,
       "{",
       ...classMembers.flatMap((member, index) => index === 0
         ? [indent(member)]
@@ -190,9 +193,47 @@ function generateConstructor(fields: readonly TypedStructField[], context: Modul
 
   return [
     "public function __construct(",
-    ...fields.map((field) => `    public ${phpType(field.type, context)} $${toPropertyName(field.name)},`),
+    ...fields.flatMap((field) => [
+      ...propertyAttributes(field, context).map((attribute) => `    ${attribute}`),
+      `    public ${phpType(field.type, context)} $${toPropertyName(field.name)},`,
+    ]),
     ") {}",
   ].join("\n");
+}
+
+function propertyAttributes(field: TypedStructField, context: ModuleOutputContext): string[] {
+  const attributes: string[] = [];
+  const propertyName = toPropertyName(field.name);
+
+  if (propertyName !== field.name) {
+    attributes.push(`#[MapInputName('${field.name}')]`);
+  }
+
+  const collectionClassName = dataCollectionClassName(field.type, context);
+
+  if (collectionClassName !== null) {
+    attributes.push(`#[DataCollectionOf(${collectionClassName}::class)]`);
+  }
+
+  return attributes;
+}
+
+function dataCollectionClassName(type: SkirType, context: ModuleOutputContext): string | null {
+  if (typeKind(type) !== "array") {
+    return null;
+  }
+
+  const itemType = arrayItemType(type);
+
+  if (typeKind(itemType) !== "record") {
+    return null;
+  }
+
+  if (isEnumRecordReference(itemType, context)) {
+    return null;
+  }
+
+  return recordTypeClassName(itemType, context);
 }
 
 function generateSkirType(record: SkirRecord, context: ModuleOutputContext): string {
@@ -216,10 +257,10 @@ function generateSkirType(record: SkirRecord, context: ModuleOutputContext): str
   ].join("\n");
 }
 
-function generateToArray(fields: readonly TypedStructField[], context: ModuleOutputContext): string {
+function generateToSkirArray(fields: readonly TypedStructField[], context: ModuleOutputContext): string {
   return [
     "/** @return array<string, mixed> */",
-    "public function toArray(): array",
+    "public function toSkirArray(): array",
     "{",
     "    return [",
     ...fields.map((field) => {
@@ -232,32 +273,46 @@ function generateToArray(fields: readonly TypedStructField[], context: ModuleOut
   ].join("\n");
 }
 
-function generateFromArray(className: string, fields: readonly TypedStructField[], context: ModuleOutputContext): string {
+function generateMakeFromSkirPayload(fields: readonly TypedStructField[], context: ModuleOutputContext): string {
   return [
     "/** @param array<string, mixed> $data */",
-    `public static function fromArray(array $data): ${className}`,
+    "public static function makeFromSkirPayload(array $data): self",
     "{",
-    "    return new self(",
-    ...fields.map((field) => `        ${toPropertyName(field.name)}: ${valueFromArrayExpression(field.type, `$data['${field.name}']`, context)},`),
-    "    );",
+    "    $payload = [",
+    ...fields.map((field) => `        '${field.name}' => ${valueFromArrayExpression(field.type, `$data['${field.name}']`, context)},`),
+    "    ];",
+    "",
+    "    return self::factory()->withoutMagicalCreation()->alwaysValidate()->from($payload);",
     "}",
   ].join("\n");
 }
 
-function generateToDenseJson(): string {
+function generateFromSkir(className: string): string {
   return [
-    "public function toDenseJson(): string",
+    `public static function fromSkir(string $json): ${className}`,
     "{",
-    "    return DenseJson::toJson(self::skirType(), $this->toArray());",
+    "    $data = DenseJson::fromJson(self::skirType(), $json);",
+    "",
+    "    return self::makeFromSkirPayload($data);",
     "}",
   ].join("\n");
 }
 
-function generateFromDenseJson(className: string): string {
+function generateToSkir(): string {
   return [
-    `public static function fromDenseJson(string $json): ${className}`,
+    "/** @return array<int, mixed> */",
+    "public function toSkir(): array",
     "{",
-    "    return self::fromArray(DenseJson::fromJson(self::skirType(), $json));",
+    "    return DenseJson::encode(self::skirType(), $this->toSkirArray());",
+    "}",
+  ].join("\n");
+}
+
+function generateToSkirJson(): string {
+  return [
+    "public function toSkirJson(): string",
+    "{",
+    "    return DenseJson::toJson(self::skirType(), $this->toSkirArray());",
     "}",
   ].join("\n");
 }
@@ -732,7 +787,7 @@ function valueToArrayExpression(type: SkirType, expression: string, context: Mod
       return `${expression}->toSkirValue()`;
     }
 
-    return `${expression}->toArray()`;
+    return `${expression}->toSkirArray()`;
   }
 
   if (kind === "optional") {
@@ -764,7 +819,7 @@ function valueFromArrayExpression(type: SkirType, expression: string, context: M
       return `${recordTypeClassName(type, context)}::fromSkirValue(${expression})`;
     }
 
-    return `${recordTypeClassName(type, context)}::fromArray(${expression})`;
+    return expression;
   }
 
   if (kind === "optional") {
@@ -848,11 +903,11 @@ function recordTypeClassName(type: SkirType, context: ModuleOutputContext): stri
   }
 
   if (type.name !== undefined) {
-    return toClassName(tokenText(type.name));
+    return toDataClassName(tokenText(type.name));
   }
 
   if (type.nameParts !== undefined && type.nameParts.length > 0) {
-    return classNameFromParts(type.nameParts.map((part) => recordNamePartText(part)));
+    return toDataClassName(classNameFromParts(type.nameParts.map((part) => recordNamePartText(part))));
   }
 
   throw new Error("Skir record reference is missing a name.");
@@ -879,7 +934,7 @@ function isEnumRecordReference(type: SkirType, context: ModuleOutputContext): bo
 }
 
 function classNameForRecord(record: SkirRecord): string {
-  return record.phpClassName ?? toClassName(tokenText(record.name));
+  return record.phpClassName ?? toDataClassName(tokenText(record.name));
 }
 
 function classNameForRecordReference(context: ModuleOutputContext, recordLocation: SkirRecordLocation): string {
@@ -996,10 +1051,10 @@ function shortClassName(fullyQualifiedClassName: string): string {
 
 function classNameForRecordLocation(record: SkirRecordLocation): string {
   if (record.recordAncestors !== undefined && record.recordAncestors.length > 0) {
-    return classNameFromParts(record.recordAncestors.map((ancestor) => tokenText(ancestor.name)));
+    return toDataClassName(classNameFromParts(record.recordAncestors.map((ancestor) => tokenText(ancestor.name))));
   }
 
-  return toClassName(tokenText(record.record.name));
+  return toDataClassName(tokenText(record.record.name));
 }
 
 function classNameFromParts(parts: readonly string[]): string {
@@ -1024,6 +1079,12 @@ function toClassName(name: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join("");
+}
+
+function toDataClassName(name: string): string {
+  const className = toClassName(name);
+
+  return className.endsWith("Data") ? className : `${className}Data`;
 }
 
 function toPropertyName(name: string): string {
