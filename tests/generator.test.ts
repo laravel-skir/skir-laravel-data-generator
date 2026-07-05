@@ -150,4 +150,66 @@ describe("generatePhpFiles", () => {
     expect(userFile?.code).toContain("'address' => $this->address->toArray()");
     expect(userFile?.code).toContain("address: Address::fromArray($data['address'])");
   });
+
+  it("flattens nested Skir record locations into stable PHP class names", () => {
+    const envelopeRecord = {
+      kind: "record",
+      recordType: "struct" as const,
+      name: "Envelope",
+      fields: [
+        {
+          kind: "field" as const,
+          name: "metadata",
+          number: 0,
+          type: {
+            kind: "record",
+            nameParts: [
+              { token: { text: "Envelope" } },
+              { token: { text: "Metadata" } },
+            ],
+          },
+        },
+      ],
+    };
+
+    const metadataRecord = {
+      kind: "record",
+      recordType: "struct" as const,
+      name: "Metadata",
+      fields: [
+        { kind: "field" as const, name: "trace_id", number: 0, type: { kind: "string" } },
+      ],
+    };
+
+    const files = generatePhpFiles({
+      config: {
+        namespace: "App\\Skir",
+      },
+      modules: [
+        {
+          path: "envelope.skir",
+          records: [
+            {
+              kind: "record-location",
+              record: metadataRecord,
+              recordAncestors: [envelopeRecord, metadataRecord],
+            },
+            {
+              kind: "record-location",
+              record: envelopeRecord,
+              recordAncestors: [envelopeRecord],
+            },
+          ],
+        },
+      ],
+    });
+
+    const envelopeFile = files.find((file) => file.path === "Envelope.php");
+    const metadataFile = files.find((file) => file.path === "EnvelopeMetadata.php");
+
+    expect(metadataFile?.code).toContain("final readonly class EnvelopeMetadata");
+    expect(envelopeFile?.code).toContain("public EnvelopeMetadata $metadata");
+    expect(envelopeFile?.code).toContain("Field::value('metadata', 0, EnvelopeMetadata::skirType())");
+    expect(envelopeFile?.code).toContain("metadata: EnvelopeMetadata::fromArray($data['metadata'])");
+  });
 });

@@ -16,6 +16,7 @@ export interface SkirModule {
 export interface SkirRecordLocation {
   readonly kind: "record-location";
   readonly record: SkirRecord;
+  readonly recordAncestors?: readonly SkirRecord[];
 }
 
 export interface SkirRecord {
@@ -24,6 +25,7 @@ export interface SkirRecord {
   readonly recordType?: "struct" | "enum";
   readonly fields?: readonly SkirField[];
   readonly removedNumbers?: readonly number[];
+  readonly phpClassName?: string;
 }
 
 export type SkirField =
@@ -97,7 +99,7 @@ export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
 }
 
 function generateStructFile(namespace: string, record: SkirRecord): GeneratedFile {
-  const className = toClassName(tokenText(record.name));
+  const className = classNameForRecord(record);
   const fields = collectStructFields(record);
 
   return {
@@ -212,7 +214,7 @@ function generateFromDenseJson(className: string): string {
 }
 
 function generateEnumFile(namespace: string, record: SkirRecord): GeneratedFile {
-  const className = toClassName(tokenText(record.name));
+  const className = classNameForRecord(record);
   const variants = collectDeclarations(record);
 
   return {
@@ -445,7 +447,10 @@ function isEnum(record: SkirRecord): boolean {
 
 function normalizeRecord(record: SkirRecord | SkirRecordLocation): SkirRecord {
   if ("record" in record) {
-    return record.record;
+    return {
+      ...record.record,
+      phpClassName: classNameForRecordLocation(record),
+    };
   }
 
   return record;
@@ -487,7 +492,7 @@ function phpType(type: SkirType): string {
   }
 
   if (kind === "record") {
-    return toClassName(recordTypeName(type));
+    return recordTypeClassName(type);
   }
 
   return "mixed";
@@ -525,7 +530,7 @@ function valueFromArrayExpression(type: SkirType, expression: string): string {
   const kind = typeKind(type);
 
   if (kind === "record") {
-    return `${toClassName(recordTypeName(type))}::fromArray(${expression})`;
+    return `${recordTypeClassName(type)}::fromArray(${expression})`;
   }
 
   if (kind === "optional") {
@@ -561,7 +566,7 @@ function runtimeTypeExpression(type: SkirType): string {
   }
 
   if (kind === "record") {
-    return `${toClassName(recordTypeName(type))}::skirType()`;
+    return `${recordTypeClassName(type)}::skirType()`;
   }
 
   return `Type::${kind}()`;
@@ -595,20 +600,36 @@ function optionalInnerType(type: SkirType): SkirType {
   return "string";
 }
 
-function recordTypeName(type: SkirType): string {
+function recordTypeClassName(type: SkirType): string {
   if (typeof type === "string") {
     throw new Error("String primitive types cannot be used as record references.");
   }
 
   if (type.name !== undefined) {
-    return tokenText(type.name);
+    return toClassName(tokenText(type.name));
   }
 
   if (type.nameParts !== undefined && type.nameParts.length > 0) {
-    return recordNamePartText(type.nameParts[type.nameParts.length - 1]);
+    return classNameFromParts(type.nameParts.map((part) => recordNamePartText(part)));
   }
 
   throw new Error("Skir record reference is missing a name.");
+}
+
+function classNameForRecord(record: SkirRecord): string {
+  return record.phpClassName ?? toClassName(tokenText(record.name));
+}
+
+function classNameForRecordLocation(record: SkirRecordLocation): string {
+  if (record.recordAncestors !== undefined && record.recordAncestors.length > 0) {
+    return classNameFromParts(record.recordAncestors.map((ancestor) => tokenText(ancestor.name)));
+  }
+
+  return toClassName(tokenText(record.record.name));
+}
+
+function classNameFromParts(parts: readonly string[]): string {
+  return parts.map((part) => toClassName(part)).join("");
 }
 
 function recordNamePartText(part: SkirRecordNamePart): string {
