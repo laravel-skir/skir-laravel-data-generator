@@ -58,11 +58,22 @@ describe("generated PHP", () => {
           records: [
             {
               kind: "struct",
+              name: "Address",
+              fields: [
+                { kind: "field", name: "city", number: 0, type: { kind: "string" } },
+                { kind: "field", name: "postal_codes", number: 1, type: { kind: "array", item: { kind: "primitive", primitive: "string" } } },
+              ],
+            },
+            {
+              kind: "struct",
               name: "User",
               fields: [
                 { kind: "field", name: "user_id", number: 0, type: { kind: "int32" } },
                 { kind: "removed", number: 1 },
                 { kind: "field", name: "name", number: 2, type: { kind: "string" } },
+                { kind: "field", name: "address", number: 3, type: { kind: "record", name: "Address" } },
+                { kind: "field", name: "tags", number: 4, type: { kind: "array", item: { kind: "primitive", primitive: "string" } } },
+                { kind: "field", name: "nickname", number: 5, type: { kind: "optional", other: { kind: "primitive", primitive: "string" } } },
               ],
             },
             {
@@ -101,18 +112,33 @@ require __DIR__.'/vendor/autoload.php';
 
 use App\\Skir\\SubscriptionStatus;
 use App\\Skir\\SkirMethods;
+use App\\Skir\\Address;
 use App\\Skir\\User;
 
-$user = new User(userId: 400, name: 'John Doe');
+$user = new User(
+    userId: 400,
+    name: 'John Doe',
+    address: new Address(city: 'Antwerp', postalCodes: ['2000', '2018']),
+    tags: ['admin', 'beta'],
+    nickname: 'johnny',
+);
 
-if ($user->toDenseJson() !== '[400,0,"John Doe"]') {
+if ($user->toDenseJson() !== '[400,0,"John Doe",["Antwerp",["2000","2018"]],["admin","beta"],"johnny"]') {
     throw new RuntimeException('Unexpected user dense JSON: '.$user->toDenseJson());
 }
 
-$decodedUser = User::fromDenseJson('[400,0,"John Doe"]');
+$decodedUser = User::fromDenseJson('[400,0,"John Doe",["Antwerp",["2000","2018"]],["admin","beta"],"johnny"]');
 
 if ($decodedUser->userId !== 400 || $decodedUser->name !== 'John Doe') {
     throw new RuntimeException('Unexpected decoded user.');
+}
+
+if (! $decodedUser->address instanceof Address || $decodedUser->address->city !== 'Antwerp') {
+    throw new RuntimeException('Unexpected decoded address.');
+}
+
+if ($decodedUser->tags !== ['admin', 'beta'] || $decodedUser->nickname !== 'johnny') {
+    throw new RuntimeException('Unexpected decoded array or optional field.');
 }
 
 $status = SubscriptionStatus::premiumSince(1743682787000);
@@ -149,6 +175,6 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
       rmSync(projectPath, { recursive: true, force: true });
     }
 
-    expect(files.map((file) => file.path).sort()).toEqual(["SkirMethods.php", "SubscriptionStatus.php", "User.php"]);
+    expect(files.map((file) => file.path).sort()).toEqual(["Address.php", "SkirMethods.php", "SubscriptionStatus.php", "User.php"]);
   }, 60_000);
 });

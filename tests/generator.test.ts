@@ -115,4 +115,39 @@ describe("generatePhpFiles", () => {
     expect(methodFile?.code).toContain("requestType: GetUserRequest::skirType()");
     expect(methodFile?.code).toContain("responseType: User::skirType()");
   });
+
+  it("types and normalizes generated record fields", () => {
+    const files = generatePhpFiles({
+      config: {
+        namespace: "App\\Skir",
+      },
+      modules: [
+        {
+          path: "user.skir",
+          records: [
+            {
+              kind: "struct",
+              name: "Address",
+              fields: [
+                { kind: "field", name: "city", number: 0, type: { kind: "string" } },
+              ],
+            },
+            {
+              kind: "struct",
+              name: "User",
+              fields: [
+                { kind: "field", name: "address", number: 0, type: { kind: "record", name: "Address" } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const userFile = files.find((file) => file.path === "User.php");
+
+    expect(userFile?.code).toContain("public Address $address");
+    expect(userFile?.code).toContain("'address' => $this->address->toArray()");
+    expect(userFile?.code).toContain("address: Address::fromArray($data['address'])");
+  });
 });

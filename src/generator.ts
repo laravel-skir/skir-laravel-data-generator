@@ -121,9 +121,11 @@ function generateStructFile(namespace: string, record: SkirRecord): GeneratedFil
       "",
       indent(generateToArray(fields)),
       "",
+      indent(generateFromArray(className, fields)),
+      "",
       indent(generateToDenseJson()),
       "",
-      indent(generateFromDenseJson(className, fields)),
+      indent(generateFromDenseJson(className)),
       "}",
       "",
     ].join("\n"),
@@ -169,8 +171,24 @@ function generateToArray(fields: readonly TypedStructField[]): string {
     "public function toArray(): array",
     "{",
     "    return [",
-    ...fields.map((field) => `        '${field.name}' => $this->${toPropertyName(field.name)},`),
+    ...fields.map((field) => {
+      const property = toPropertyName(field.name);
+
+      return `        '${field.name}' => ${valueToArrayExpression(field.type, `$this->${property}`)},`;
+    }),
     "    ];",
+    "}",
+  ].join("\n");
+}
+
+function generateFromArray(className: string, fields: readonly TypedStructField[]): string {
+  return [
+    "/** @param array<string, mixed> $data */",
+    `public static function fromArray(array $data): ${className}`,
+    "{",
+    "    return new self(",
+    ...fields.map((field) => `        ${toPropertyName(field.name)}: ${valueFromArrayExpression(field.type, `$data['${field.name}']`)},`),
+    "    );",
     "}",
   ].join("\n");
 }
@@ -184,15 +202,11 @@ function generateToDenseJson(): string {
   ].join("\n");
 }
 
-function generateFromDenseJson(className: string, fields: readonly TypedStructField[]): string {
+function generateFromDenseJson(className: string): string {
   return [
     `public static function fromDenseJson(string $json): ${className}`,
     "{",
-    "    $data = DenseJson::fromJson(self::skirType(), $json);",
-    "",
-    "    return new self(",
-    ...fields.map((field) => `        ${toPropertyName(field.name)}: $data['${field.name}'],`),
-    "    );",
+    "    return self::fromArray(DenseJson::fromJson(self::skirType(), $json));",
     "}",
   ].join("\n");
 }
@@ -472,7 +486,67 @@ function phpType(type: SkirType): string {
     return "?".concat(phpType(optionalInnerType(type)));
   }
 
+  if (kind === "record") {
+    return toClassName(recordTypeName(type));
+  }
+
   return "mixed";
+}
+
+function valueToArrayExpression(type: SkirType, expression: string): string {
+  const kind = typeKind(type);
+
+  if (kind === "record") {
+    return `${expression}->toArray()`;
+  }
+
+  if (kind === "optional") {
+    const innerType = optionalInnerType(type);
+
+    if (typeKind(innerType) === "record" || typeKind(innerType) === "array") {
+      return `${expression} === null ? null : ${valueToArrayExpression(innerType, expression)}`;
+    }
+
+    return expression;
+  }
+
+  if (kind === "array") {
+    const itemType = arrayItemType(type);
+
+    if (typeKind(itemType) === "record" || typeKind(itemType) === "optional" || typeKind(itemType) === "array") {
+      return `array_map(fn (mixed $item): mixed => ${valueToArrayExpression(itemType, "$item")}, ${expression})`;
+    }
+  }
+
+  return expression;
+}
+
+function valueFromArrayExpression(type: SkirType, expression: string): string {
+  const kind = typeKind(type);
+
+  if (kind === "record") {
+    return `${toClassName(recordTypeName(type))}::fromArray(${expression})`;
+  }
+
+  if (kind === "optional") {
+    const innerType = optionalInnerType(type);
+
+    if (typeKind(innerType) === "record" || typeKind(innerType) === "array") {
+      return `${expression} === null ? null : ${valueFromArrayExpression(innerType, expression)}`;
+    }
+
+    return expression;
+  }
+
+  if (kind === "array") {
+    const itemType = arrayItemType(type);
+
+    if (typeKind(itemType) === "record" || typeKind(itemType) === "optional" || typeKind(itemType) === "array") {
+      return `array_map(fn (mixed $item): mixed => ${valueFromArrayExpression(itemType, "$item")}, ${expression})`;
+    }
+  }
+
+  return expression;
 }
 
 function runtimeTypeExpression(type: SkirType): string {
