@@ -5,6 +5,7 @@ export interface PhpGeneratorConfig {
 export interface PhpGeneratorInput {
   readonly config?: PhpGeneratorConfig;
   readonly modules: readonly SkirModule[];
+  readonly recordMap?: ReadonlyMap<string, SkirRecordLocation>;
 }
 
 export interface SkirModule {
@@ -17,6 +18,7 @@ export interface SkirRecordLocation {
   readonly kind: "record-location";
   readonly record: SkirRecord;
   readonly recordAncestors?: readonly SkirRecord[];
+  readonly modulePath?: string;
 }
 
 export interface SkirRecord {
@@ -47,6 +49,7 @@ export type SkirType =
       readonly primitive?: string;
       readonly item?: SkirType;
       readonly other?: SkirType;
+      readonly key?: unknown;
       readonly name?: string | SkirToken;
       readonly nameParts?: readonly SkirRecordNamePart[];
     };
@@ -76,8 +79,10 @@ export interface GeneratedFile {
 }
 
 interface ModuleOutputContext {
+  readonly rootNamespace: string;
   readonly namespace: string;
   readonly pathPrefix: string;
+  readonly recordMap?: ReadonlyMap<string, SkirRecordLocation>;
 }
 
 export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
@@ -86,7 +91,7 @@ export function generatePhpFiles(input: PhpGeneratorInput): GeneratedFile[] {
   const recordFiles: GeneratedFile[] = [];
 
   for (const module of input.modules) {
-    const context = outputContextForModule(namespace, module);
+    const context = outputContextForModule(namespace, module, input.recordMap);
 
     recordFiles.push(
       ...(module.records ?? [])
@@ -139,13 +144,13 @@ function generateStructFile(context: ModuleOutputContext, record: SkirRecord): G
       "",
       `final readonly class ${className}`,
       "{",
-      indent(generateConstructor(fields)),
+      indent(generateConstructor(fields, context)),
       "",
-      indent(generateSkirType(record)),
+      indent(generateSkirType(record, context)),
       "",
       indent(generateToArray(fields)),
       "",
-      indent(generateFromArray(className, fields)),
+      indent(generateFromArray(className, fields, context)),
       "",
       indent(generateToDenseJson()),
       "",
@@ -156,26 +161,26 @@ function generateStructFile(context: ModuleOutputContext, record: SkirRecord): G
   };
 }
 
-function generateConstructor(fields: readonly TypedStructField[]): string {
+function generateConstructor(fields: readonly TypedStructField[], context: ModuleOutputContext): string {
   if (fields.length === 0) {
     return "private function __construct() {}";
   }
 
   return [
     "public function __construct(",
-    ...fields.map((field) => `    public ${phpType(field.type)} $${toPropertyName(field.name)},`),
+    ...fields.map((field) => `    public ${phpType(field.type, context)} $${toPropertyName(field.name)},`),
     ") {}",
   ].join("\n");
 }
 
-function generateSkirType(record: SkirRecord): string {
+function generateSkirType(record: SkirRecord, context: ModuleOutputContext): string {
   const entries = collectDeclarations(record, "string")
     .map((declaration) => {
       if (isRemovedDeclaration(declaration)) {
         return `    Field::removed(${declaration.number}),`;
       }
 
-      return `    Field::value('${declaration.name}', ${declaration.number}, ${runtimeTypeExpression(declaration.type ?? "string")}),`;
+      return `    Field::value('${declaration.name}', ${declaration.number}, ${runtimeTypeExpression(declaration.type ?? "string", context)}),`;
     })
     .join("\n");
 
@@ -205,13 +210,13 @@ function generateToArray(fields: readonly TypedStructField[]): string {
   ].join("\n");
 }
 
-function generateFromArray(className: string, fields: readonly TypedStructField[]): string {
+function generateFromArray(className: string, fields: readonly TypedStructField[], context: ModuleOutputContext): string {
   return [
     "/** @param array<string, mixed> $data */",
     `public static function fromArray(array $data): ${className}`,
     "{",
     "    return new self(",
-    ...fields.map((field) => `        ${toPropertyName(field.name)}: ${valueFromArrayExpression(field.type, `$data['${field.name}']`)},`),
+    ...fields.map((field) => `        ${toPropertyName(field.name)}: ${valueFromArrayExpression(field.type, `$data['${field.name}']`, context)},`),
     "    );",
     "}",
   ].join("\n");
@@ -257,9 +262,9 @@ function generateEnumFile(context: ModuleOutputContext, record: SkirRecord): Gen
       "{",
       indent("private function __construct(private EnumValue $value) {}"),
       "",
-      indent(generateEnumConstructors(variants)),
+      indent(generateEnumConstructors(variants, context)),
       "",
-      indent(generateEnumSkirType(record)),
+      indent(generateEnumSkirType(record, context)),
       "",
       indent(generateEnumAccessors()),
       "",
@@ -272,7 +277,7 @@ function generateEnumFile(context: ModuleOutputContext, record: SkirRecord): Gen
   };
 }
 
-function generateEnumConstructors(variants: readonly StructDeclaration[]): string {
+function generateEnumConstructors(variants: readonly StructDeclaration[], context: ModuleOutputContext): string {
   return variants
     .filter((variant): variant is StructField => !isRemovedDeclaration(variant))
     .map((variant) => {
@@ -286,7 +291,7 @@ function generateEnumConstructors(variants: readonly StructDeclaration[]): strin
       }
 
       return [
-        `public static function ${toPropertyName(variant.name)}(${phpType(variant.type)} $value): self`,
+        `public static function ${toPropertyName(variant.name)}(${phpType(variant.type, context)} $value): self`,
         "{",
         `    return new self(EnumValue::wrapper('${variant.name}', $value));`,
         "}",
@@ -295,7 +300,7 @@ function generateEnumConstructors(variants: readonly StructDeclaration[]): strin
     .join("\n\n");
 }
 
-function generateEnumSkirType(record: SkirRecord): string {
+function generateEnumSkirType(record: SkirRecord, context: ModuleOutputContext): string {
   const entries = collectDeclarations(record)
     .map((declaration) => {
       if (isRemovedDeclaration(declaration)) {
@@ -306,7 +311,7 @@ function generateEnumSkirType(record: SkirRecord): string {
         return `    Variant::constant('${declaration.name}', ${declaration.number}),`;
       }
 
-      return `    Variant::wrapper('${declaration.name}', ${declaration.number}, ${runtimeTypeExpression(declaration.type)}),`;
+      return `    Variant::wrapper('${declaration.name}', ${declaration.number}, ${runtimeTypeExpression(declaration.type, context)}),`;
     })
     .filter((entry): entry is string => entry !== null)
     .join("\n");
@@ -369,7 +374,7 @@ function generateMethodsFile(context: ModuleOutputContext, methods: readonly Ski
       "{",
       indent(generateAllMethods(methods)),
       "",
-      indent(methods.map((method) => generateMethodDescriptor(method)).join("\n\n")),
+      indent(methods.map((method) => generateMethodDescriptor(method, context)).join("\n\n")),
       "}",
       "",
     ].join("\n"),
@@ -388,15 +393,15 @@ function generateAllMethods(methods: readonly SkirMethod[]): string {
   ].join("\n");
 }
 
-function generateMethodDescriptor(method: SkirMethod): string {
+function generateMethodDescriptor(method: SkirMethod, context: ModuleOutputContext): string {
   return [
     `public static function ${toPropertyName(tokenText(method.name))}(): MethodDescriptor`,
     "{",
     "    return new MethodDescriptor(",
     `        name: '${tokenText(method.name)}',`,
     `        number: ${method.number},`,
-    `        requestType: ${runtimeTypeExpression(method.requestType ?? "string")},`,
-    `        responseType: ${runtimeTypeExpression(method.responseType ?? "string")},`,
+    `        requestType: ${runtimeTypeExpression(method.requestType ?? "string", context)},`,
+    `        responseType: ${runtimeTypeExpression(method.responseType ?? "string", context)},`,
     "    );",
     "}",
   ].join("\n");
@@ -482,7 +487,7 @@ function isRemovedDeclaration(declaration: StructDeclaration): declaration is Re
   return "kind" in declaration && declaration.kind === "removed";
 }
 
-function phpType(type: SkirType): string {
+function phpType(type: SkirType, context: ModuleOutputContext): string {
   const kind = typeKind(type);
 
   if (kind === "bool") {
@@ -510,11 +515,11 @@ function phpType(type: SkirType): string {
   }
 
   if (kind === "optional") {
-    return "?".concat(phpType(optionalInnerType(type)));
+    return "?".concat(phpType(optionalInnerType(type), context));
   }
 
   if (kind === "record") {
-    return recordTypeClassName(type);
+    return recordTypeClassName(type, context);
   }
 
   return "mixed";
@@ -548,18 +553,18 @@ function valueToArrayExpression(type: SkirType, expression: string): string {
   return expression;
 }
 
-function valueFromArrayExpression(type: SkirType, expression: string): string {
+function valueFromArrayExpression(type: SkirType, expression: string, context: ModuleOutputContext): string {
   const kind = typeKind(type);
 
   if (kind === "record") {
-    return `${recordTypeClassName(type)}::fromArray(${expression})`;
+    return `${recordTypeClassName(type, context)}::fromArray(${expression})`;
   }
 
   if (kind === "optional") {
     const innerType = optionalInnerType(type);
 
     if (typeKind(innerType) === "record" || typeKind(innerType) === "array") {
-      return `${expression} === null ? null : ${valueFromArrayExpression(innerType, expression)}`;
+      return `${expression} === null ? null : ${valueFromArrayExpression(innerType, expression, context)}`;
     }
 
     return expression;
@@ -569,26 +574,26 @@ function valueFromArrayExpression(type: SkirType, expression: string): string {
     const itemType = arrayItemType(type);
 
     if (typeKind(itemType) === "record" || typeKind(itemType) === "optional" || typeKind(itemType) === "array") {
-      return `array_map(fn (mixed $item): mixed => ${valueFromArrayExpression(itemType, "$item")}, ${expression})`;
+      return `array_map(fn (mixed $item): mixed => ${valueFromArrayExpression(itemType, "$item", context)}, ${expression})`;
     }
   }
 
   return expression;
 }
 
-function runtimeTypeExpression(type: SkirType): string {
+function runtimeTypeExpression(type: SkirType, context: ModuleOutputContext): string {
   const kind = typeKind(type);
 
   if (kind === "array") {
-    return `Type::array(${runtimeTypeExpression(arrayItemType(type))})`;
+    return `Type::array(${runtimeTypeExpression(arrayItemType(type), context)})`;
   }
 
   if (kind === "optional") {
-    return `Type::optional(${runtimeTypeExpression(optionalInnerType(type))})`;
+    return `Type::optional(${runtimeTypeExpression(optionalInnerType(type), context)})`;
   }
 
   if (kind === "record") {
-    return `${recordTypeClassName(type)}::skirType()`;
+    return `${recordTypeClassName(type, context)}::skirType()`;
   }
 
   return `Type::${kind}()`;
@@ -622,9 +627,17 @@ function optionalInnerType(type: SkirType): SkirType {
   return "string";
 }
 
-function recordTypeClassName(type: SkirType): string {
+function recordTypeClassName(type: SkirType, context: ModuleOutputContext): string {
   if (typeof type === "string") {
     throw new Error("String primitive types cannot be used as record references.");
+  }
+
+  if (typeof type.key === "string" && context.recordMap !== undefined) {
+    const recordLocation = context.recordMap.get(type.key);
+
+    if (recordLocation !== undefined) {
+      return classNameForRecordReference(context, recordLocation);
+    }
   }
 
   if (type.name !== undefined) {
@@ -642,8 +655,27 @@ function classNameForRecord(record: SkirRecord): string {
   return record.phpClassName ?? toClassName(tokenText(record.name));
 }
 
-function outputContextForModule(rootNamespace: string, module: SkirModule): ModuleOutputContext {
-  const directoryParts = module.path
+function classNameForRecordReference(context: ModuleOutputContext, recordLocation: SkirRecordLocation): string {
+  const className = classNameForRecordLocation(recordLocation);
+  const recordContext = outputContextForModulePath(
+    context.rootNamespace,
+    recordLocation.modulePath ?? "",
+    context.recordMap,
+  );
+
+  if (recordContext.namespace === context.namespace) {
+    return className;
+  }
+
+  return `\\${recordContext.namespace}\\${className}`;
+}
+
+function outputContextForModule(rootNamespace: string, module: SkirModule, recordMap?: ReadonlyMap<string, SkirRecordLocation>): ModuleOutputContext {
+  return outputContextForModulePath(rootNamespace, module.path, recordMap);
+}
+
+function outputContextForModulePath(rootNamespace: string, modulePath: string, recordMap?: ReadonlyMap<string, SkirRecordLocation>): ModuleOutputContext {
+  const directoryParts = modulePath
     .split("/")
     .slice(0, -1)
     .map((part) => toClassName(part))
@@ -651,14 +683,18 @@ function outputContextForModule(rootNamespace: string, module: SkirModule): Modu
 
   if (directoryParts.length === 0) {
     return {
+      rootNamespace,
       namespace: rootNamespace,
       pathPrefix: "",
+      recordMap,
     };
   }
 
   return {
+    rootNamespace,
     namespace: [rootNamespace, ...directoryParts].join("\\"),
     pathPrefix: directoryParts.join("/"),
+    recordMap,
   };
 }
 

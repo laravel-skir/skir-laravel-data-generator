@@ -11,6 +11,7 @@ describe("skir CLI integration", () => {
     const projectPath = mkdtempSync(join(tmpdir(), "skir-php-cli-"));
     const skirSourcePath = join(projectPath, "skir-src");
     const adminSkirSourcePath = join(skirSourcePath, "admin");
+    const commonSkirSourcePath = join(skirSourcePath, "common");
     const generatedPath = join(projectPath, "generated", "skirout");
     const runtimePath = process.env.SKIR_RUNTIME_PATH ?? resolve("../runtime");
     const generatorPath = resolve("dist/index.js");
@@ -20,6 +21,7 @@ describe("skir CLI integration", () => {
     expect(existsSync(skirBinPath)).toBe(true);
 
     mkdirSync(adminSkirSourcePath, { recursive: true });
+    mkdirSync(commonSkirSourcePath, { recursive: true });
 
     writeFileSync(
       join(projectPath, "skir.yml"),
@@ -36,10 +38,7 @@ describe("skir CLI integration", () => {
     writeFileSync(
       join(adminSkirSourcePath, "users.skir"),
       [
-        "struct Address {",
-        "  city: string;",
-        "  postal_codes: [string];",
-        "}",
+        'import { Address } from "../common/address.skir";',
         "",
         "struct User {",
         "  user_id: int32;",
@@ -54,6 +53,17 @@ describe("skir CLI integration", () => {
         "}",
         "",
         "method GetUser(User): User = 3180856469;",
+        "",
+      ].join("\n"),
+    );
+
+    writeFileSync(
+      join(commonSkirSourcePath, "address.skir"),
+      [
+        "struct Address {",
+        "  city: string;",
+        "  postal_codes: [string];",
+        "}",
         "",
       ].join("\n"),
     );
@@ -99,10 +109,10 @@ declare(strict_types=1);
 
 require __DIR__.'/vendor/autoload.php';
 
-use App\\Skir\\Admin\\Address;
 use App\\Skir\\Admin\\SkirMethods;
 use App\\Skir\\Admin\\SubscriptionStatus;
 use App\\Skir\\Admin\\User;
+use App\\Skir\\Common\\Address;
 
 $user = new User(
     userId: 400,
@@ -144,10 +154,10 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
       });
 
       const generatedFiles = [
-        join(generatedPath, "Admin", "Address.php"),
         join(generatedPath, "Admin", "User.php"),
         join(generatedPath, "Admin", "SubscriptionStatus.php"),
         join(generatedPath, "Admin", "SkirMethods.php"),
+        join(generatedPath, "Common", "Address.php"),
       ];
 
       for (const generatedFile of generatedFiles) {

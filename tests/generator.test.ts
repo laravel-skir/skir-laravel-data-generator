@@ -164,6 +164,63 @@ describe("generatePhpFiles", () => {
     expect(methodsFile?.code).toContain("responseType: User::skirType()");
   });
 
+  it("qualifies record references from other module namespaces", () => {
+    const addressRecord = {
+      kind: "record",
+      recordType: "struct" as const,
+      name: "Address",
+      fields: [
+        { kind: "field" as const, name: "city", number: 0, type: { kind: "primitive", primitive: "string" } },
+      ],
+    };
+
+    const files = generatePhpFiles({
+      config: {
+        namespace: "App\\Skir",
+      },
+      recordMap: new Map([
+        [
+          "common/address.skir:0",
+          {
+            kind: "record-location",
+            record: addressRecord,
+            recordAncestors: [addressRecord],
+            modulePath: "common/address.skir",
+          },
+        ],
+      ]),
+      modules: [
+        {
+          path: "admin/users.skir",
+          records: [
+            {
+              kind: "struct",
+              name: "User",
+              fields: [
+                {
+                  kind: "field",
+                  name: "address",
+                  number: 0,
+                  type: {
+                    kind: "record",
+                    key: "common/address.skir:0",
+                    nameParts: [{ token: { text: "Address" } }],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const userFile = files.find((file) => file.path === "Admin/User.php");
+
+    expect(userFile?.code).toContain("public \\App\\Skir\\Common\\Address $address");
+    expect(userFile?.code).toContain("Field::value('address', 0, \\App\\Skir\\Common\\Address::skirType())");
+    expect(userFile?.code).toContain("address: \\App\\Skir\\Common\\Address::fromArray($data['address'])");
+  });
+
   it("types and normalizes generated record fields", () => {
     const files = generatePhpFiles({
       config: {
