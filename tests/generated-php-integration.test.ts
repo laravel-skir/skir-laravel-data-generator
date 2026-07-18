@@ -88,6 +88,10 @@ describe("generated PHP", () => {
                 { kind: "field", name: "previous_addresses", number: 6, type: { kind: "array", item: { kind: "record", name: "Address" } } },
                 { kind: "field", name: "subscription_status", number: 7, type: { kind: "record", name: "SubscriptionStatus", recordType: "enum" } },
                 { kind: "field", name: "status_history", number: 8, type: { kind: "array", item: { kind: "record", name: "SubscriptionStatus", recordType: "enum" } } },
+                { kind: "field", name: "optional_previous_addresses", number: 9, type: { kind: "optional", other: { kind: "array", item: { kind: "record", name: "Address" } } } },
+                { kind: "field", name: "nullable_previous_addresses", number: 10, type: { kind: "array", item: { kind: "optional", other: { kind: "record", name: "Address" } } } },
+                { kind: "field", name: "nested_previous_addresses", number: 11, type: { kind: "array", item: { kind: "array", item: { kind: "record", name: "Address" } } } },
+                { kind: "field", name: "optional_nested_previous_addresses", number: 12, type: { kind: "optional", other: { kind: "array", item: { kind: "array", item: { kind: "record", name: "Address" } } } } },
               ],
             },
             {
@@ -256,13 +260,29 @@ $user = new UserData(
         SubscriptionStatusData::free(),
         SubscriptionStatusData::premiumSince(1743682787000),
     ],
+    optionalPreviousAddresses: [
+        new AddressData(city: 'Leuven', postalCodes: ['3000']),
+    ],
+    nullablePreviousAddresses: [
+        null,
+        new AddressData(city: 'Bruges', postalCodes: ['8000']),
+    ],
+    nestedPreviousAddresses: [
+        [new AddressData(city: 'Hasselt', postalCodes: ['3500'])],
+        [new AddressData(city: 'Mechelen', postalCodes: ['2800'])],
+    ],
+    optionalNestedPreviousAddresses: [
+        [new AddressData(city: 'Aalst', postalCodes: ['9300'])],
+    ],
 );
 
-if ($user->toSkirJson() !== '[400,0,"John Doe",["Antwerp",["2000","2018"]],["admin","beta"],"johnny",[["Brussels",["1000"]],["Ghent",["9000"]]],[2,1743682787000],[1,[2,1743682787000]]]') {
+$expectedUserJson = '[400,0,"John Doe",["Antwerp",["2000","2018"]],["admin","beta"],"johnny",[["Brussels",["1000"]],["Ghent",["9000"]]],[2,1743682787000],[1,[2,1743682787000]],[["Leuven",["3000"]]],[null,["Bruges",["8000"]]],[[["Hasselt",["3500"]]],[["Mechelen",["2800"]]]],[[["Aalst",["9300"]]]]]';
+
+if ($user->toSkirJson() !== $expectedUserJson) {
     throw new RuntimeException('Unexpected user dense JSON: '.$user->toSkirJson());
 }
 
-$decodedUser = UserData::fromSkir('[400,0,"John Doe",["Antwerp",["2000","2018"]],["admin","beta"],"johnny",[["Brussels",["1000"]],["Ghent",["9000"]]],[2,1743682787000],[1,[2,1743682787000]]]');
+$decodedUser = UserData::fromSkir($expectedUserJson);
 
 if ($decodedUser->userId !== 400 || $decodedUser->name !== 'John Doe') {
     throw new RuntimeException('Unexpected decoded user.');
@@ -286,6 +306,26 @@ if ($decodedUser->subscriptionStatus->name() !== 'premium_since' || $decodedUser
 
 if (count($decodedUser->statusHistory) !== 2 || $decodedUser->statusHistory[0]->name() !== 'free') {
     throw new RuntimeException('Unexpected decoded enum array.');
+}
+
+if (count($decodedUser->optionalPreviousAddresses) !== 1 || ! $decodedUser->optionalPreviousAddresses[0] instanceof AddressData) {
+    throw new RuntimeException('Unexpected decoded optional record array.');
+}
+
+if ($decodedUser->nullablePreviousAddresses[0] !== null || ! $decodedUser->nullablePreviousAddresses[1] instanceof AddressData) {
+    throw new RuntimeException('Unexpected decoded nullable record array.');
+}
+
+if (! $decodedUser->nestedPreviousAddresses[0][0] instanceof AddressData || $decodedUser->nestedPreviousAddresses[0][0]->city !== 'Hasselt') {
+    throw new RuntimeException('Unexpected decoded nested record array.');
+}
+
+if (! $decodedUser->optionalNestedPreviousAddresses[0][0] instanceof AddressData || $decodedUser->optionalNestedPreviousAddresses[0][0]->city !== 'Aalst') {
+    throw new RuntimeException('Unexpected decoded optional nested record array.');
+}
+
+if ($decodedUser->toSkirJson() !== $expectedUserJson) {
+    throw new RuntimeException('Unexpected decoded user round trip: '.$decodedUser->toSkirJson());
 }
 
 $status = SubscriptionStatusData::premiumSince(1743682787000);

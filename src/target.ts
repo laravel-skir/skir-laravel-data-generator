@@ -18,13 +18,30 @@ import {
 
 import { GENERATOR_MODULE } from "./config.js";
 
+const LARAVEL_DATA_STRUCT_IMPORTS = [
+  "Skir\\Runtime\\DenseJson",
+  "Skir\\Runtime\\Field",
+  "Skir\\Runtime\\Type",
+  "Spatie\\LaravelData\\Attributes\\DataCollectionOf",
+  "Spatie\\LaravelData\\Attributes\\MapInputName",
+  "Spatie\\LaravelData\\Data",
+] as const;
+
 export class LaravelDataTarget implements PhpTargetAdapter {
   public readonly id = GENERATOR_MODULE;
 
   public recordClassName(record: NormalizedRecord): string {
+    if (record.phpClassName !== undefined) {
+      return record.phpClassName;
+    }
+
     const className = toClassName(record.qualifiedName);
 
     return className.endsWith("Data") ? className : `${className}Data`;
+  }
+
+  public structImports(record: NormalizedRecord): readonly string[] {
+    return LARAVEL_DATA_STRUCT_IMPORTS;
   }
 
   public renderStruct({ record, context }: StructRenderRequest): GeneratedFile {
@@ -33,20 +50,12 @@ export class LaravelDataTarget implements PhpTargetAdapter {
     }
 
     const className = classNameForRecord(record, context);
-    const runtimeImports = [
-      "Skir\\Runtime\\DenseJson",
-      "Skir\\Runtime\\Field",
-      "Skir\\Runtime\\Type",
-      "Spatie\\LaravelData\\Attributes\\DataCollectionOf",
-      "Spatie\\LaravelData\\Attributes\\MapInputName",
-      "Spatie\\LaravelData\\Data",
-    ] as const;
-    const denseJson = importClass(context.imports, runtimeImports[0]);
-    const fieldClass = importClass(context.imports, runtimeImports[1]);
-    const typeClass = importClass(context.imports, runtimeImports[2]);
-    const dataCollectionOf = importClass(context.imports, runtimeImports[3]);
-    const mapInputName = importClass(context.imports, runtimeImports[4]);
-    const dataClass = importClass(context.imports, runtimeImports[5]);
+    const denseJson = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[0]);
+    const fieldClass = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[1]);
+    const typeClass = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[2]);
+    const dataCollectionOf = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[3]);
+    const mapInputName = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[4]);
+    const dataClass = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[5]);
     const fields = record.fields.filter(isStructField);
     const constructor = this.renderConstructor(
       fields,
@@ -76,7 +85,7 @@ export class LaravelDataTarget implements PhpTargetAdapter {
       path: outputPath(context, `${className}.php`),
       code: renderPhpFile({
         namespace: context.namespace,
-        imports: renderUseStatements(context.imports, runtimeImports),
+        imports: renderUseStatements(context.imports, LARAVEL_DATA_STRUCT_IMPORTS),
         body,
       }),
     };
@@ -252,7 +261,12 @@ export class LaravelDataTarget implements PhpTargetAdapter {
       "{",
       "    $payload = [",
       ...fields.map((field) => (
-        `        '${field.name}' => ${valueFromSkirPayloadExpression(field.type, `$data['${field.name}']`, context)},`
+        `        '${field.name}' => ${valueFromSkirPayloadExpression(
+          field.type,
+          `$data['${field.name}']`,
+          context,
+          shouldHydrateStructsManually(field.type),
+        )},`
       )),
       "    ];",
       "",
@@ -358,31 +372,38 @@ function dataCollectionClassName(
   type: NormalizedType,
   context: RenderContext,
 ): string | null {
-  if (type.kind !== "array") {
+  const collectionType = unwrapOptionalType(type);
+
+  if (collectionType.kind !== "array") {
     return null;
   }
 
-  if (type.item.kind !== "record" || type.item.recordType === "enum") {
+  if (collectionType.item.kind !== "record" || collectionType.item.recordType === "enum") {
     return null;
   }
 
-  return recordTypeClassName(type.item, context);
+  return recordTypeClassName(collectionType.item, context);
 }
 
 function valueFromSkirPayloadExpression(
   type: NormalizedType,
   expression: string,
   context: RenderContext,
+  hydrateStructsManually: boolean,
 ): string {
   if (type.kind === "record") {
-    return type.recordType === "enum"
-      ? `${recordTypeClassName(type, context)}::fromSkirValue(${expression})`
+    if (type.recordType === "enum") {
+      return `${recordTypeClassName(type, context)}::fromSkirValue(${expression})`;
+    }
+
+    return hydrateStructsManually
+      ? `${recordTypeClassName(type, context)}::makeFromSkirPayload(${expression})`
       : expression;
   }
 
   if (type.kind === "optional") {
     if (type.inner.kind === "record" || type.inner.kind === "array") {
-      return `${expression} === null ? null : ${valueFromSkirPayloadExpression(type.inner, expression, context)}`;
+      return `${expression} === null ? null : ${valueFromSkirPayloadExpression(type.inner, expression, context, hydrateStructsManually)}`;
     }
 
     return expression;
@@ -390,11 +411,35 @@ function valueFromSkirPayloadExpression(
 
   if (type.kind === "array") {
     if (isRecursivelyMappedType(type.item)) {
-      return `array_map(fn (mixed $item): mixed => ${valueFromSkirPayloadExpression(type.item, "$item", context)}, ${expression})`;
+      return `array_map(fn (mixed $item): mixed => ${valueFromSkirPayloadExpression(type.item, "$item", context, hydrateStructsManually)}, ${expression})`;
     }
   }
 
   return expression;
+}
+
+function shouldHydrateStructsManually(type: NormalizedType): boolean {
+  const rootType = unwrapOptionalType(type);
+
+  if (rootType.kind === "record") {
+    return false;
+  }
+
+  if (rootType.kind !== "array") {
+    return true;
+  }
+
+  return rootType.item.kind !== "record" || rootType.item.recordType === "enum";
+}
+
+function unwrapOptionalType(type: NormalizedType): NormalizedType {
+  let unwrappedType = type;
+
+  while (unwrappedType.kind === "optional") {
+    unwrappedType = unwrappedType.inner;
+  }
+
+  return unwrappedType;
 }
 
 function isRecursivelyMappedType(type: NormalizedType): boolean {

@@ -10,6 +10,241 @@ import { generateLaravelDataFiles } from "../src/generator.js";
 import { LaravelDataTarget } from "../src/target.js";
 
 describe("LaravelDataTarget", () => {
+  it("preserves authoritative PHP class names in files, references, and manifests", () => {
+    const files = generateLaravelDataFiles({
+      config: { namespace: "App\\Skir" },
+      modules: [{
+        path: "common/models.skir",
+        records: [{
+          kind: "struct",
+          key: "user",
+          name: "User",
+          phpClassName: "LegacyUser",
+          fields: [],
+        }, {
+          kind: "struct",
+          name: "Envelope",
+          fields: [{
+            kind: "field",
+            name: "user",
+            number: 1,
+            type: { kind: "record", key: "user", recordType: "struct" },
+          }],
+        }],
+        methods: [{
+          kind: "method",
+          name: "ResolveUser",
+          number: 1,
+          requestType: { kind: "record", key: "user", recordType: "struct" },
+          responseType: { kind: "record", name: "Envelope", recordType: "struct" },
+        }],
+      }],
+    });
+    const envelope = fileCode(files, "Common/EnvelopeData.php");
+    const manifest = JSON.parse(fileCode(files, "skir-server-manifest.json"));
+
+    expect(files.map((file) => file.path)).toContain("Common/LegacyUser.php");
+    expect(files.map((file) => file.path)).not.toContain("Common/LegacyUserData.php");
+    expect(envelope).toContain("public LegacyUser $user");
+    expect(envelope).toContain("Field::value('user', 1, LegacyUser::skirType())");
+    expect(manifest.modules[0].methods[0]).toMatchObject({
+      requestType: "App\\Skir\\Common\\LegacyUser",
+      requestClass: "App\\Skir\\Common\\LegacyUser",
+      responseType: "App\\Skir\\Common\\EnvelopeData",
+      responseClass: "App\\Skir\\Common\\EnvelopeData",
+    });
+  });
+
+  it("preserves authoritative PHP class names in collision fallbacks", () => {
+    const commonAddress = {
+      ...record("common-address", "RemoteAddress"),
+      phpClassName: "AddressData",
+    };
+    const commonLocation = location(commonAddress, "common/address.skir");
+    const files = generateLaravelDataFiles({
+      config: { namespace: "App\\Skir" },
+      modules: [{ path: "common/address.skir", records: [commonLocation] }, {
+        path: "admin/address.skir",
+        records: [{
+          kind: "struct",
+          name: "Address",
+          fields: [{
+            kind: "field",
+            name: "common_address",
+            number: 1,
+            type: { kind: "record", key: "common-address", recordType: "struct" },
+          }],
+        }],
+        methods: [{
+          kind: "method",
+          name: "ResolveAddress",
+          number: 1,
+          requestType: { kind: "record", key: "common-address", recordType: "struct" },
+          responseType: "bool",
+        }],
+      }],
+      recordMap: new Map([["common-address", commonLocation]]),
+    });
+    const localAddress = fileCode(files, "Admin/AddressData.php");
+    const manifest = JSON.parse(fileCode(files, "skir-server-manifest.json"));
+
+    expect(files.map((file) => file.path)).toContain("Common/AddressData.php");
+    expect(localAddress).not.toContain("use App\\Skir\\Common\\AddressData;");
+    expect(localAddress).toContain("public \\App\\Skir\\Common\\AddressData $commonAddress");
+    expect(manifest.modules[0].methods[0]).toMatchObject({
+      requestType: "App\\Skir\\Common\\AddressData",
+      requestClass: "App\\Skir\\Common\\AddressData",
+    });
+  });
+
+  it("preplans struct runtime imports that collide with emitted class names", () => {
+    const files = generateLaravelDataFiles({
+      config: { namespace: "App\\Skir" },
+      modules: [{
+        path: "collisions.skir",
+        records: [{
+          kind: "struct",
+          name: "RuntimeData",
+          phpClassName: "Data",
+          fields: [],
+        }, {
+          kind: "struct",
+          key: "child",
+          name: "Child",
+          fields: [],
+        }, {
+          kind: "struct",
+          name: "CollectionAttribute",
+          phpClassName: "DataCollectionOf",
+          fields: [{
+            kind: "field",
+            name: "children",
+            number: 1,
+            type: {
+              kind: "array",
+              item: { kind: "record", key: "child", recordType: "struct" },
+            },
+          }],
+        }, {
+          kind: "struct",
+          name: "MapAttribute",
+          phpClassName: "MapInputName",
+          fields: [{ kind: "field", name: "user_id", number: 1, type: "int32" }],
+        }],
+      }],
+    });
+    const collisionFiles = [
+      fileCode(files, "Data.php"),
+      fileCode(files, "DataCollectionOf.php"),
+      fileCode(files, "MapInputName.php"),
+    ];
+
+    for (const code of collisionFiles) {
+      const dataImport = code.match(/use Spatie\\LaravelData\\Data as ([A-Za-z_][A-Za-z0-9_]*);/u);
+
+      expect(dataImport).not.toBeNull();
+      expect(code).toContain(`extends ${dataImport?.[1]}`);
+      lintPhp(code);
+    }
+
+    expect(collisionFiles[1]).toMatch(
+      /use Spatie\\LaravelData\\Attributes\\DataCollectionOf as [A-Za-z_][A-Za-z0-9_]*;/u,
+    );
+    expect(collisionFiles[2]).toMatch(
+      /use Spatie\\LaravelData\\Attributes\\MapInputName as [A-Za-z_][A-Za-z0-9_]*;/u,
+    );
+  });
+
+  it("hydrates nullable-item and nested struct arrays manually without unsupported collection metadata", () => {
+    const files = generateLaravelDataFiles({
+      config: { namespace: "App\\Skir" },
+      modules: [{
+        path: "collections.skir",
+        records: [{
+          kind: "struct",
+          key: "child",
+          name: "Child",
+          fields: [{ kind: "field", name: "value", number: 1, type: "string" }],
+        }, {
+          kind: "struct",
+          name: "CollectionEnvelope",
+          fields: [{
+            kind: "field",
+            name: "direct_children",
+            number: 1,
+            type: arrayOf(recordReference("child")),
+          }, {
+            kind: "field",
+            name: "optional_children",
+            number: 2,
+            type: optional(arrayOf(recordReference("child"))),
+          }, {
+            kind: "field",
+            name: "nullable_children",
+            number: 3,
+            type: arrayOf(optional(recordReference("child"))),
+          }, {
+            kind: "field",
+            name: "nested_children",
+            number: 4,
+            type: arrayOf(arrayOf(recordReference("child"))),
+          }, {
+            kind: "field",
+            name: "optional_nested_children",
+            number: 5,
+            type: optional(arrayOf(arrayOf(recordReference("child")))),
+          }],
+        }],
+      }],
+    });
+    const envelope = fileCode(files, "CollectionEnvelopeData.php");
+
+    expect(envelope).toContain(
+      "#[MapInputName('direct_children')]\n        #[DataCollectionOf(ChildData::class)]\n        public array $directChildren,",
+    );
+    expect(envelope).toContain(
+      "#[MapInputName('optional_children')]\n        #[DataCollectionOf(ChildData::class)]\n        public ?array $optionalChildren,",
+    );
+    expect(envelope).toContain(
+      "#[MapInputName('nullable_children')]\n        public array $nullableChildren,",
+    );
+    expect(envelope).toContain(
+      "#[MapInputName('nested_children')]\n        public array $nestedChildren,",
+    );
+    expect(envelope).toContain(
+      "#[MapInputName('optional_nested_children')]\n        public ?array $optionalNestedChildren,",
+    );
+    expect(envelope).toContain(
+      "'direct_children' => array_map(fn (mixed $item): mixed => $item, $data['direct_children'])",
+    );
+    expect(envelope).toContain(
+      "'optional_children' => $data['optional_children'] === null ? null : array_map(fn (mixed $item): mixed => $item, $data['optional_children'])",
+    );
+    expect(envelope).toContain(
+      "'nullable_children' => array_map(fn (mixed $item): mixed => $item === null ? null : ChildData::makeFromSkirPayload($item), $data['nullable_children'])",
+    );
+    expect(envelope).toContain(
+      "'nested_children' => array_map(fn (mixed $item): mixed => array_map(fn (mixed $item): mixed => ChildData::makeFromSkirPayload($item), $item), $data['nested_children'])",
+    );
+    expect(envelope).toContain(
+      "'optional_nested_children' => $data['optional_nested_children'] === null ? null : array_map(fn (mixed $item): mixed => array_map(fn (mixed $item): mixed => ChildData::makeFromSkirPayload($item), $item), $data['optional_nested_children'])",
+    );
+    expect(envelope).toContain(
+      "'nullable_children' => array_map(fn (mixed $item): mixed => $item === null ? null : $item->toSkirArray(), $this->nullableChildren)",
+    );
+    expect(envelope).toContain(
+      "'nested_children' => array_map(fn (mixed $item): mixed => array_map(fn (mixed $item): mixed => $item->toSkirArray(), $item), $this->nestedChildren)",
+    );
+    expect(envelope).toContain(
+      "return self::factory()->withoutMagicalCreation()->alwaysValidate()->from($payload);",
+    );
+    expect(envelope).not.toContain(
+      "#[MapInputName('nullable_children')]\n        #[DataCollectionOf(ChildData::class)]",
+    );
+    expect(envelope).not.toContain("#[DataCollectionOf(array::class)]");
+    expect(envelope).not.toContain("$this->nestedChildren->toSkirArray()");
+  });
+
   it("preserves Laravel Data rendering, hydration, conversions, and manifest classes", () => {
     const files = generateLaravelDataFiles({
       config: { namespace: "App\\Skir" },
@@ -335,6 +570,26 @@ function location<SkirRecord extends ReturnType<typeof record> | Record<string, 
 
 function optional<Type>(other: Type) {
   return { kind: "optional" as const, other };
+}
+
+function arrayOf<Type>(item: Type) {
+  return { kind: "array" as const, item };
+}
+
+function recordReference(key: string) {
+  return { kind: "record" as const, key, recordType: "struct" as const };
+}
+
+function lintPhp(code: string): void {
+  const outputPath = mkdtempSync(join(tmpdir(), "skir-laravel-data-lint-"));
+  const filePath = join(outputPath, "Generated.php");
+
+  try {
+    writeFileSync(filePath, code);
+    execFileSync("php", ["-l", filePath], { stdio: "pipe" });
+  } finally {
+    rmSync(outputPath, { recursive: true, force: true });
+  }
 }
 
 function fileCode(

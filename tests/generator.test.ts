@@ -365,6 +365,96 @@ describe("generateLaravelDataFiles", () => {
     ]));
   });
 
+  it("preserves recursive manifest nullability and object classes", () => {
+    const nestedOptional = <Type>(other: Type) => ({
+      kind: "optional" as const,
+      other: { kind: "optional" as const, other },
+    });
+    const files = generateLaravelDataFiles({
+      config: { namespace: "App\\Skir" },
+      modules: [{
+        path: "rpc/types.skir",
+        records: [{
+          kind: "struct",
+          key: "payload",
+          name: "Payload",
+          fields: [],
+        }, {
+          kind: "enum",
+          key: "scope",
+          name: "Scope",
+          fields: [{ kind: "field", name: "all", number: 1 }],
+        }],
+        methods: [{
+          kind: "method",
+          name: "OptionalMixed",
+          number: 1,
+          requestType: { kind: "optional", other: "mixed" },
+          responseType: nestedOptional("mixed"),
+        }, {
+          kind: "method",
+          name: "OptionalInt64",
+          number: 2,
+          requestType: { kind: "optional", other: "int64" },
+          responseType: nestedOptional("int64"),
+        }, {
+          kind: "method",
+          name: "NestedOptionalString",
+          number: 3,
+          requestType: nestedOptional("string"),
+          responseType: nestedOptional("string"),
+        }, {
+          kind: "method",
+          name: "NestedOptionalStruct",
+          number: 4,
+          requestType: nestedOptional({ kind: "record", key: "payload", recordType: "struct" as const }),
+          responseType: nestedOptional({ kind: "record", key: "payload", recordType: "struct" as const }),
+        }, {
+          kind: "method",
+          name: "NestedOptionalEnum",
+          number: 5,
+          requestType: nestedOptional({ kind: "record", key: "scope", recordType: "enum" as const }),
+          responseType: nestedOptional({ kind: "record", key: "scope", recordType: "enum" as const }),
+        }],
+      }],
+    });
+    const manifestFile = files.find((file) => file.path === "skir-server-manifest.json");
+    const manifest = JSON.parse(manifestFile?.code ?? "");
+    const methods = manifest.modules[0].methods;
+
+    expect(methods[0]).toMatchObject({
+      requestType: "mixed",
+      requestClass: null,
+      responseType: "mixed",
+      responseClass: null,
+    });
+    expect(methods[1]).toMatchObject({
+      requestType: "int|string|null",
+      requestClass: null,
+      responseType: "int|string|null",
+      responseClass: null,
+    });
+    expect(methods[2]).toMatchObject({
+      requestType: "?string",
+      requestClass: null,
+      responseType: "?string",
+      responseClass: null,
+    });
+    expect(methods[3]).toMatchObject({
+      requestType: "?App\\Skir\\Rpc\\PayloadData",
+      requestClass: "App\\Skir\\Rpc\\PayloadData",
+      responseType: "?App\\Skir\\Rpc\\PayloadData",
+      responseClass: "App\\Skir\\Rpc\\PayloadData",
+    });
+    expect(methods[4]).toMatchObject({
+      requestType: "?App\\Skir\\Rpc\\ScopeData",
+      requestClass: null,
+      responseType: "?App\\Skir\\Rpc\\ScopeData",
+      responseClass: "App\\Skir\\Rpc\\ScopeData",
+    });
+    expect(JSON.stringify(manifest)).not.toMatch(/\?mixed|\?\?|null\|null/u);
+  });
+
   it.each([
     ["user-profile/service.skir", "UserProfile", "Skir\\UserProfile", "UserProfile"],
     ["admin/users/service.skir", "Admin.Users", "Skir\\Admin\\Users", "Admin/Users"],
