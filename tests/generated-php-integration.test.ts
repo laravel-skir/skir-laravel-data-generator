@@ -1,31 +1,34 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { generateLaravelDataFiles } from "../src/generator.js";
+import {
+  COMPOSER_FIXTURE_TEST_TIMEOUT_MS,
+  createComposerFixture,
+  executeFixtureCommand,
+  type ComposerFixture,
+  removeComposerFixtures,
+} from "./composer-fixture.js";
 
-const EXTERNAL_COMMAND_TIMEOUT_MS = 120_000;
-const projectPaths: string[] = [];
+const composerFixtures: ComposerFixture[] = [];
 
 afterEach(() => {
-  for (const projectPath of projectPaths.splice(0)) {
-    rmSync(projectPath, { recursive: true, force: true });
-  }
+  removeComposerFixtures(composerFixtures);
 });
 
 describe("generated PHP", () => {
   it("round-trips dense JSON through php-skir/runtime", () => {
-    const projectPath = mkdtempSync(join(tmpdir(), "skir-laravel-data-generator-"));
-    projectPaths.push(projectPath);
+    const fixture = createComposerFixture(
+      "skir-laravel-data-generator-",
+      composerFixtures,
+    );
+    const { projectPath } = fixture;
     const sourcePath = join(projectPath, "src");
-    const composerHome = join(projectPath, ".composer");
     const runtimePath = process.env.SKIR_RUNTIME_PATH ?? resolve("../runtime");
 
     mkdirSync(sourcePath, { recursive: true });
-    mkdirSync(composerHome, { recursive: true });
 
     writeFileSync(
       join(projectPath, "composer.json"),
@@ -149,9 +152,8 @@ describe("generated PHP", () => {
 
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, file.code);
-      execFileSync("php", ["-l", filePath], {
-        stdio: "pipe",
-        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
+      executeFixtureCommand(fixture, "php", ["-l", filePath], {
+        timeout: 15_000,
       });
     }
 
@@ -188,6 +190,7 @@ declare(strict_types=1);
 
 require __DIR__.'/vendor/autoload.php';
 
+use Composer\\InstalledVersions;
 use Illuminate\\Config\\Repository;
 use Illuminate\\Container\\Container;
 use Illuminate\\Support\\Facades\\Facade;
@@ -274,6 +277,14 @@ use App\\Skir\\AddressData;
 use App\\Skir\\CompanyContactData;
 use App\\Skir\\HealthCheckRequestData;
 use App\\Skir\\UserData;
+
+if (! InstalledVersions::isInstalled('spatie/laravel-data')) {
+    throw new RuntimeException('spatie/laravel-data was not installed.');
+}
+
+if (! InstalledVersions::isInstalled('php-skir/runtime')) {
+    throw new RuntimeException('php-skir/runtime was not installed.');
+}
 
 $healthCheckRequest = new HealthCheckRequestData();
 
@@ -420,22 +431,14 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
 `,
     );
 
-    if (! existsSync(join(projectPath, "vendor", "autoload.php"))) {
-      execFileSync("composer", ["install", "--no-interaction", "--no-progress"], {
-        cwd: projectPath,
-        env: {
-          ...process.env,
-          COMPOSER_HOME: composerHome,
-        },
-        stdio: "pipe",
-        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
-      });
-    }
+    executeFixtureCommand(
+      fixture,
+      "composer",
+      ["install", "--no-interaction", "--no-progress"],
+    );
 
-    execFileSync("php", ["verify.php"], {
-      cwd: projectPath,
-      stdio: "inherit",
-      timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
+    executeFixtureCommand(fixture, "php", ["verify.php"], {
+      timeout: 30_000,
     });
 
     expect(files.map((file) => file.path).sort()).toEqual([
@@ -452,5 +455,5 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
       "UserData.php",
       "skir-server-manifest.json",
     ]);
-  }, 180_000);
+  }, COMPOSER_FIXTURE_TEST_TIMEOUT_MS);
 });

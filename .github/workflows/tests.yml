@@ -26,6 +26,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Test coverage badge publisher
+        run: bash .github/scripts/publish-coverage-badge.test.sh
+
       - name: Checkout runtime
         uses: actions/checkout@v7
         with:
@@ -60,18 +63,15 @@ jobs:
       - name: Run tests
         run: npm test
         env:
+          COMPOSER_HOME: ${{ runner.temp }}/composer-home
           SKIR_RUNTIME_PATH: ${{ github.workspace }}/runtime
 
   coverage:
     name: Coverage
-    if: github.ref == 'refs/heads/main'
     needs: tests
     runs-on: ubuntu-latest
-    concurrency:
-      group: coverage-badge
-      cancel-in-progress: false
     permissions:
-      contents: write
+      contents: read
 
     steps:
       - name: Checkout
@@ -102,7 +102,41 @@ jobs:
       - name: Measure coverage
         run: npm run test:coverage
         env:
+          COMPOSER_HOME: ${{ runner.temp }}/composer-home
           SKIR_RUNTIME_PATH: ${{ github.workspace }}/runtime
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: coverage/coverage-summary.json
+          if-no-files-found: error
+
+  coverage-badge:
+    name: Coverage badge
+    if: github.ref == 'refs/heads/main'
+    needs: coverage
+    runs-on: ubuntu-latest
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Download coverage summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-summary
+          path: coverage
 
       - name: Generate coverage badge
         run: |

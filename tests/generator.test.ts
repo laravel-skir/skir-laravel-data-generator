@@ -452,6 +452,30 @@ final class CreateUserData extends Data
     expect(files[0]?.code).not.toContain("__construct");
   });
 
+  it("does not duplicate removed field numbers declared in both compiler shapes", () => {
+    const files = generateLaravelDataFiles({
+      modules: [
+        {
+          path: "user.skir",
+          records: [
+            {
+              kind: "struct",
+              name: "User",
+              fields: [
+                { kind: "field", name: "name", number: 0, type: { kind: "string" } },
+                { kind: "removed", number: 1 },
+              ],
+              removedNumbers: [1],
+            },
+          ],
+        },
+      ],
+    });
+    const code = files[0]?.code ?? "";
+
+    expect(code.match(/Field::removed\(1\)/g)).toHaveLength(1);
+  });
+
   it("generates a PHP wrapper class for a Skir enum", () => {
     const files = generateLaravelDataFiles({
       config: {

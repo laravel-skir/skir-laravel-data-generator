@@ -8,12 +8,13 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
-    name: Publish to npm
+  verify:
+    name: Verify package
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -36,7 +37,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - name: Install dependencies
@@ -54,7 +54,42 @@ jobs:
       - name: Run tests
         run: npm test
         env:
+          COMPOSER_HOME: ${{ runner.temp }}/composer-home
           SKIR_RUNTIME_PATH: ${{ github.workspace }}/runtime
 
+      - name: Create publish tarball
+        run: |
+          mkdir -p build/package
+          npm pack --ignore-scripts --pack-destination build/package --cache .npm-cache
+
+      - name: Upload publish tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: build/package/skir-laravel-data-generator-*.tgz
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Download publish tarball
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: build/package
+
       - name: Publish
-        run: npm publish --provenance --access public
+        run: npm publish build/package/skir-laravel-data-generator-*.tgz --ignore-scripts --provenance --access public
