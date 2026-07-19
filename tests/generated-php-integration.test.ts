@@ -1,19 +1,31 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { generateLaravelDataFiles } from "../src/generator.js";
+
+const EXTERNAL_COMMAND_TIMEOUT_MS = 120_000;
+const projectPaths: string[] = [];
+
+afterEach(() => {
+  for (const projectPath of projectPaths.splice(0)) {
+    rmSync(projectPath, { recursive: true, force: true });
+  }
+});
 
 describe("generated PHP", () => {
   it("round-trips dense JSON through php-skir/runtime", () => {
     const projectPath = mkdtempSync(join(tmpdir(), "skir-laravel-data-generator-"));
+    projectPaths.push(projectPath);
     const sourcePath = join(projectPath, "src");
+    const composerHome = join(projectPath, ".composer");
     const runtimePath = process.env.SKIR_RUNTIME_PATH ?? resolve("../runtime");
 
     mkdirSync(sourcePath, { recursive: true });
+    mkdirSync(composerHome, { recursive: true });
 
     writeFileSync(
       join(projectPath, "composer.json"),
@@ -137,7 +149,10 @@ describe("generated PHP", () => {
 
       mkdirSync(dirname(filePath), { recursive: true });
       writeFileSync(filePath, file.code);
-      execFileSync("php", ["-l", filePath], { stdio: "pipe" });
+      execFileSync("php", ["-l", filePath], {
+        stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
+      });
     }
 
     const manifestFile = files.find((file) => file.path === "skir-server-manifest.json");
@@ -408,13 +423,19 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
     if (! existsSync(join(projectPath, "vendor", "autoload.php"))) {
       execFileSync("composer", ["install", "--no-interaction", "--no-progress"], {
         cwd: projectPath,
+        env: {
+          ...process.env,
+          COMPOSER_HOME: composerHome,
+        },
         stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
       });
     }
 
     execFileSync("php", ["verify.php"], {
       cwd: projectPath,
       stdio: "inherit",
+      timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
     });
 
     expect(files.map((file) => file.path).sort()).toEqual([
