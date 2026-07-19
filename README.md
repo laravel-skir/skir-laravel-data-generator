@@ -1,5 +1,11 @@
 # Skir Laravel Data Generator
 
+[![Tests](https://github.com/php-skir/skir-laravel-data-generator/actions/workflows/tests.yml/badge.svg)](https://github.com/php-skir/skir-laravel-data-generator/actions/workflows/tests.yml)
+[![Coverage](https://raw.githubusercontent.com/php-skir/skir-laravel-data-generator/badges/coverage.svg)](https://github.com/php-skir/skir-laravel-data-generator/actions/workflows/tests.yml)
+[![npm](https://img.shields.io/npm/v/skir-laravel-data-generator?label=npm&logo=npm)](https://www.npmjs.com/package/skir-laravel-data-generator)
+[![Node.js](https://img.shields.io/badge/Node.js-22%20%7C%2024-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![License](https://img.shields.io/github/license/php-skir/skir-laravel-data-generator)](LICENSE)
+
 Generates Spatie Laravel Data objects, typed RPC clients, and server procedure contracts from Skir schemas.
 
 Generated PHP uses `spatie/laravel-data` for DTO creation and validation and `php-skir/runtime` for dense JSON serialization. Install `php-skir/client` when using generated RPC clients and `php-skir/server` when using generated server contracts.
