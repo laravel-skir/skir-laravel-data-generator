@@ -4,16 +4,27 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+
+const EXTERNAL_COMMAND_TIMEOUT_MS = 120_000;
+const projectPaths: string[] = [];
+
+afterEach(() => {
+  for (const projectPath of projectPaths.splice(0)) {
+    rmSync(projectPath, { recursive: true, force: true });
+  }
+});
 
 describe("skir CLI integration", () => {
   it("generates executable PHP from a real .skir fixture", () => {
     const projectPath = mkdtempSync(join(tmpdir(), "skir-laravel-data-generator-cli-"));
+    projectPaths.push(projectPath);
     const skirSourcePath = join(projectPath, "skir-src");
     const adminSkirSourcePath = join(skirSourcePath, "admin");
     const commonSkirSourcePath = join(skirSourcePath, "common");
     const stubClientPath = join(projectPath, "stub-client", "Skir", "Client");
     const generatedPath = join(projectPath, "generated", "skirout");
+    const composerHome = join(projectPath, ".composer");
     const runtimePath = process.env.SKIR_RUNTIME_PATH ?? resolve("../runtime");
     const generatorPath = resolve("dist/index.js");
     const skirBinPath = resolve("node_modules/skir/dist/compiler.js");
@@ -26,6 +37,7 @@ describe("skir CLI integration", () => {
     mkdirSync(adminSkirSourcePath, { recursive: true });
     mkdirSync(commonSkirSourcePath, { recursive: true });
     mkdirSync(stubClientPath, { recursive: true });
+    mkdirSync(composerHome, { recursive: true });
 
     writeFileSync(
       join(projectPath, "skir.yml"),
@@ -294,6 +306,7 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
     execFileSync("node", [skirBinPath, "gen", "--root", projectPath], {
       cwd: resolve("."),
       stdio: "pipe",
+      timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
     });
 
     execFileSync(
@@ -306,7 +319,11 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
         "--mod",
         pathToFileURL(generatorPath).href,
       ],
-      { cwd: resolve("."), stdio: "pipe" },
+      {
+        cwd: resolve("."),
+        stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
+      },
     );
 
     expect(JSON.parse(readFileSync(join(projectPath, "composer.json"), "utf8")))
@@ -333,10 +350,39 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
 
     for (const generatedFile of generatedFiles) {
       expect(existsSync(generatedFile)).toBe(true);
-      execFileSync("php", ["-l", generatedFile], { stdio: "pipe" });
+      execFileSync("php", ["-l", generatedFile], {
+        stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
+      });
     }
 
     expect(existsSync(join(generatedPath, "Admin", "UserData.php"))).toBe(false);
+
+    const manifestPath = join(generatedPath, "skir-server-manifest.json");
+
+    expect(existsSync(manifestPath)).toBe(true);
+
+    expect(JSON.parse(readFileSync(manifestPath, "utf8"))).toEqual({
+      version: 1,
+      generator: "skir-laravel-data-generator",
+      modules: [
+        {
+          name: "Admin",
+          methodEnum: "Skir\\Admin\\AdminSkirMethod",
+          methods: [
+            {
+              name: "GetUser",
+              enumCase: "GetUser",
+              phpMethod: "getUser",
+              requestType: "Skir\\Admin\\UsersUserData",
+              requestClass: "Skir\\Admin\\UsersUserData",
+              responseType: "Skir\\Admin\\UsersUserData",
+              responseClass: "Skir\\Admin\\UsersUserData",
+            },
+          ],
+        },
+      ],
+    });
 
     const userCode = readFileSync(join(generatedPath, "Admin", "UsersUserData.php"), "utf8");
     const methodsCode = readFileSync(join(generatedPath, "Admin", "SkirMethods.php"), "utf8");
@@ -353,18 +399,29 @@ if (! $rpcUser instanceof UsersUserData || $rpcUser->name !== 'John Doe') {
     if (existsSync(join(projectPath, "vendor", "autoload.php"))) {
       execFileSync("composer", ["dump-autoload", "--no-interaction"], {
         cwd: projectPath,
+        env: {
+          ...process.env,
+          COMPOSER_HOME: composerHome,
+        },
         stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
       });
     } else {
       execFileSync("composer", ["install", "--no-interaction", "--no-progress"], {
         cwd: projectPath,
+        env: {
+          ...process.env,
+          COMPOSER_HOME: composerHome,
+        },
         stdio: "pipe",
+        timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
       });
     }
 
     execFileSync("php", ["verify.php"], {
       cwd: projectPath,
       stdio: "pipe",
+      timeout: EXTERNAL_COMMAND_TIMEOUT_MS,
     });
   }, 180_000);
 });

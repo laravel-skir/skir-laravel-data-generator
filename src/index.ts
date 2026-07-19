@@ -5,7 +5,7 @@ import { generateLaravelDataFiles } from "./generator.js";
 
 class LaravelDataGenerator implements CodeGenerator<GeneratorConfig> {
   readonly id = GENERATOR_MODULE;
-  readonly configType = GeneratorConfig;
+  readonly configType: CodeGenerator<GeneratorConfig>["configType"] = GeneratorConfig;
 
   generateCode(input: CodeGenerator.Input<GeneratorConfig>): CodeGenerator.Output {
     return {
@@ -17,3 +17,5 @@ class LaravelDataGenerator implements CodeGenerator<GeneratorConfig> {
 export const GENERATOR = new LaravelDataGenerator();
 
 export { generateLaravelDataFiles };
+export { LaravelDataTarget } from "./target.js";
+export default GENERATOR;

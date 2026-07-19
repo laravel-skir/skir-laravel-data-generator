@@ -1,6 +1,6 @@
 {
   "name": "skir-laravel-data-generator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Skir code generator for Spatie Laravel Data objects.",
   "type": "module",
   "license": "MIT",
@@ -43,9 +43,10 @@
     "pack:dry-run": "npm pack --dry-run --cache .npm-cache",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.reporter=json-summary --coverage.include=src/**/*.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json"
   },
   "dependencies": {
+    "@php-skir/generator-core": "^0.1.0",
     "jsonc-parser": "^3.3.1",
     "skir-internal": "^0.2.21",
     "yaml": "^2.9.0",
