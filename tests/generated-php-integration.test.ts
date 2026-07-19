@@ -57,6 +57,14 @@ describe("generated PHP", () => {
     const files = generateLaravelDataFiles({
       config: {
         namespace: "App\\Skir",
+        validation: {
+          "fixtures.skir": {
+            CompanyContact: {
+              email: ["required", "email:rfc", "company_email"],
+              contact_label: ["max:80"],
+            },
+          },
+        },
       },
       modules: [
         {
@@ -74,6 +82,14 @@ describe("generated PHP", () => {
               kind: "struct",
               name: "HealthCheckRequest",
               fields: [],
+            },
+            {
+              kind: "struct",
+              name: "CompanyContact",
+              fields: [
+                { kind: "field", name: "email", number: 0, type: { kind: "string" } },
+                { kind: "field", name: "contact_label", number: 1, type: { kind: "string" } },
+              ],
             },
             {
               kind: "struct",
@@ -162,7 +178,9 @@ use Illuminate\\Container\\Container;
 use Illuminate\\Support\\Facades\\Facade;
 use Illuminate\\Translation\\ArrayLoader;
 use Illuminate\\Translation\\Translator;
+use Illuminate\\Validation\\ValidationException;
 use Illuminate\\Validation\\Factory as ValidatorFactory;
+use Spatie\\LaravelData\\Support\\DataConfig;
 
 if (! function_exists('app')) {
     function app(?string $abstract = null, array $parameters = []): mixed
@@ -226,9 +244,11 @@ Facade::setFacadeApplication($container);
 $container->instance('config', new Repository([
     'data' => require __DIR__.'/vendor/spatie/laravel-data/config/data.php',
 ]));
+$container->instance(DataConfig::class, DataConfig::createFromConfig(config('data')));
 
 $translator = new Translator(new ArrayLoader(), 'en');
 $validator = new ValidatorFactory($translator, $container);
+$validator->extend('company_email', static fn (string $attribute, mixed $value): bool => is_string($value) && str_ends_with($value, '@company.test'));
 
 $container->instance('validator', $validator);
 $container->alias('validator', \\Illuminate\\Contracts\\Validation\\Factory::class);
@@ -236,6 +256,7 @@ $container->alias('validator', \\Illuminate\\Contracts\\Validation\\Factory::cla
 use App\\Skir\\SubscriptionStatusData;
 use App\\Skir\\SkirMethods;
 use App\\Skir\\AddressData;
+use App\\Skir\\CompanyContactData;
 use App\\Skir\\HealthCheckRequestData;
 use App\\Skir\\UserData;
 
@@ -243,6 +264,42 @@ $healthCheckRequest = new HealthCheckRequestData();
 
 if ($healthCheckRequest->toSkirJson() !== '[]') {
     throw new RuntimeException('Unexpected health check dense JSON: '.$healthCheckRequest->toSkirJson());
+}
+
+$companyContact = CompanyContactData::makeFromSkirPayload([
+    'email' => 'maxim@company.test',
+    'contact_label' => 'Primary',
+]);
+
+if ($companyContact->email !== 'maxim@company.test' || $companyContact->contactLabel !== 'Primary') {
+    throw new RuntimeException('Unexpected validated company contact.');
+}
+
+try {
+    CompanyContactData::makeFromSkirPayload([
+        'email' => 'maxim@example.test',
+        'contact_label' => 'Primary',
+    ]);
+    throw new RuntimeException('Expected company email validation to fail.');
+} catch (ValidationException) {
+}
+
+try {
+    CompanyContactData::makeFromSkirPayload([
+        'email' => 'maxim@company.test',
+        'contact_label' => null,
+    ]);
+    throw new RuntimeException('Expected inferred required validation to fail.');
+} catch (ValidationException) {
+}
+
+try {
+    CompanyContactData::makeFromSkirPayload([
+        'email' => 'maxim@company.test',
+        'contact_label' => str_repeat('x', 81),
+    ]);
+    throw new RuntimeException('Expected mapped contact label validation to fail.');
+} catch (ValidationException) {
 }
 
 $user = new UserData(
@@ -363,6 +420,7 @@ if ($method->name !== 'GetUser' || $method->number !== 3180856469) {
     expect(files.map((file) => file.path).sort()).toEqual([
       "AbstractSkirProcedures.php",
       "AddressData.php",
+      "CompanyContactData.php",
       "HealthCheckRequestData.php",
       "SkirMethod.php",
       "SkirMethods.php",

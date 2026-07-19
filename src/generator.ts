@@ -20,12 +20,12 @@ export interface PhpGeneratorInput extends CoreGeneratorInput {
 }
 
 export function generateLaravelDataFiles(input: PhpGeneratorInput): GeneratedFile[] {
-  const { namespace } = GeneratorConfig.parse(input.config ?? {});
+  const { namespace, validation = {} } = GeneratorConfig.parse(input.config ?? {});
 
   return generatePhp({
     ...input,
     namespace,
-    adapter: new LaravelDataTarget(),
+    adapter: new LaravelDataTarget(validation),
   });
 }
 

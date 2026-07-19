@@ -4,16 +4,20 @@ import {
   indent,
   renderPhpFile,
   renderUseStatements,
+  resolveValidationRules,
   toClassName,
   toPhpNamespaceSegment,
   toPropertyName,
   type GeneratedFile,
   type NormalizedField,
   type NormalizedRecord,
+  type NormalizedSchema,
   type NormalizedType,
   type PhpTargetAdapter,
   type RenderContext,
+  type ResolvedValidationRules,
   type StructRenderRequest,
+  type ValidationConfig,
 } from "@php-skir/generator-core";
 
 import { GENERATOR_MODULE } from "./config.js";
@@ -26,9 +30,25 @@ const LARAVEL_DATA_STRUCT_IMPORTS = [
   "Spatie\\LaravelData\\Attributes\\MapInputName",
   "Spatie\\LaravelData\\Data",
 ] as const;
+const MERGE_VALIDATION_RULES = "Spatie\\LaravelData\\Attributes\\MergeValidationRules";
+const LARAVEL_DATA_VALIDATED_STRUCT_IMPORTS = [
+  ...LARAVEL_DATA_STRUCT_IMPORTS.slice(0, -1),
+  MERGE_VALIDATION_RULES,
+  LARAVEL_DATA_STRUCT_IMPORTS.at(-1)!,
+] as const;
 
 export class LaravelDataTarget implements PhpTargetAdapter {
   public readonly id = GENERATOR_MODULE;
+  private resolvedValidationRules: ResolvedValidationRules = new Map();
+
+  public constructor(
+    private readonly validation: ValidationConfig = {},
+  ) {}
+
+  public prepare(schema: NormalizedSchema): void {
+    this.resolvedValidationRules = new Map();
+    this.resolvedValidationRules = resolveValidationRules(schema, this.validation);
+  }
 
   public recordClassName(record: NormalizedRecord): string {
     if (record.phpClassName !== undefined) {
@@ -41,7 +61,9 @@ export class LaravelDataTarget implements PhpTargetAdapter {
   }
 
   public structImports(record: NormalizedRecord): readonly string[] {
-    return LARAVEL_DATA_STRUCT_IMPORTS;
+    return this.validationRulesFor(record) === undefined
+      ? LARAVEL_DATA_STRUCT_IMPORTS
+      : LARAVEL_DATA_VALIDATED_STRUCT_IMPORTS;
   }
 
   public renderStruct({ record, context }: StructRenderRequest): GeneratedFile {
@@ -56,6 +78,10 @@ export class LaravelDataTarget implements PhpTargetAdapter {
     const dataCollectionOf = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[3]);
     const mapInputName = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[4]);
     const dataClass = importClass(context.imports, LARAVEL_DATA_STRUCT_IMPORTS[5]);
+    const validationRules = this.validationRulesFor(record);
+    const mergeValidationRules = validationRules === undefined
+      ? null
+      : importClass(context.imports, MERGE_VALIDATION_RULES);
     const fields = record.fields.filter(isStructField);
     const constructor = this.renderConstructor(
       fields,
@@ -64,6 +90,7 @@ export class LaravelDataTarget implements PhpTargetAdapter {
       mapInputName,
     );
     const members = [
+      validationRules === undefined ? null : renderValidationRules(validationRules),
       constructor,
       this.renderSkirType(record, context, fieldClass, typeClass),
       this.renderToSkirArray(fields, context),
@@ -73,6 +100,7 @@ export class LaravelDataTarget implements PhpTargetAdapter {
       this.renderToSkirJson(denseJson),
     ].filter((member): member is string => member !== null);
     const body = [
+      ...(mergeValidationRules === null ? [] : [`#[${mergeValidationRules}]`]),
       `final class ${className} extends ${dataClass}`,
       "{",
       ...members.flatMap((member, index) => index === 0
@@ -85,10 +113,20 @@ export class LaravelDataTarget implements PhpTargetAdapter {
       path: outputPath(context, `${className}.php`),
       code: renderPhpFile({
         namespace: context.namespace,
-        imports: renderUseStatements(context.imports, LARAVEL_DATA_STRUCT_IMPORTS),
+        imports: renderUseStatements(context.imports, this.structImports(record)),
         body,
       }),
     };
+  }
+
+  private validationRulesFor(
+    record: NormalizedRecord,
+  ): ReadonlyMap<string, readonly string[]> | undefined {
+    const validationRules = this.resolvedValidationRules.get(record.identity);
+
+    return validationRules === undefined || validationRules.size === 0
+      ? undefined
+      : validationRules;
   }
 
   public phpType(type: NormalizedType, context: RenderContext): string {
@@ -334,6 +372,51 @@ export class LaravelDataTarget implements PhpTargetAdapter {
 
     return expression;
   }
+}
+
+function renderValidationRules(
+  validationRules: ReadonlyMap<string, readonly string[]>,
+): string {
+  return [
+    "/** @return array<string, list<string>> */",
+    "public static function rules(): array",
+    "{",
+    "    return [",
+    ...[...validationRules].map(([fieldName, rules]) => (
+      `        ${phpSingleQuotedLiteral(fieldName)} => [${rules.map(phpSingleQuotedLiteral).join(", ")}],`
+    )),
+    "    ];",
+    "}",
+  ].join("\n");
+}
+
+function phpSingleQuotedLiteral(value: string): string {
+  const expressions: string[] = [];
+  let segment = "";
+
+  for (const character of value) {
+    if (character !== "\n" && character !== "\r") {
+      segment += character;
+      continue;
+    }
+
+    if (segment !== "") {
+      expressions.push(escapedPhpStringSegment(segment));
+      segment = "";
+    }
+
+    expressions.push(character === "\n" ? "chr(10)" : "chr(13)");
+  }
+
+  if (segment !== "" || expressions.length === 0) {
+    expressions.push(escapedPhpStringSegment(segment));
+  }
+
+  return expressions.join(".");
+}
+
+function escapedPhpStringSegment(value: string): string {
+  return `'${value.replaceAll("\\", "\\\\").replaceAll("'", "\\'")}'`;
 }
 
 function nullablePhpType(type: string): string {
