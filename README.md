@@ -314,9 +314,3 @@ The current schema version is `1`:
 `methodEnum` and record request and response types are fully qualified PHP names without a leading backslash. Generated record names include the Laravel Data `Data` suffix. `requestClass` is non-null only when the request is a generated object/struct data object that can be hydrated through a Form Request; enum and other value requests use `null` while `requestType` retains their PHP type. `responseClass` identifies a generated response class that can be imported. Scalar and union types use PHP type syntax and have a `null` class field. Optional object/struct requests keep their underlying data object in `requestClass`. Names are derived from the actual generated record location, including nested and cross-module references.
 
 Run `npx skir gen` after changing a schema. No extra generator option is required to emit the manifest.
-
-## Releasing
-
-`@php-skir/generator-core` is a normal semver dependency of this package. Publish the required core version first, replace any local development link with that published version, update the lockfile, and verify a clean `npm ci` before releasing this adapter.
-
-Create a GitHub release for the version in `package.json`. The release workflow reruns type checks, build, package validation, and tests before publishing to npm with provenance. Configure this GitHub repository and its `release.yml` workflow as an npm trusted publisher; the workflow authenticates through OIDC and does not use a long-lived npm token.
